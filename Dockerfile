@@ -1,3 +1,4 @@
+ARG VERSION
 FROM alpine:${VERSION} as rootfs-stage
 WORKDIR /downloads
 # install packages
@@ -16,7 +17,11 @@ RUN set -ex \
 	&& chmod +x install.sh \
 	&& bash install.sh
 
+
+
+
 # Runtime stage
+ARG VERSION
 FROM alpine:${VERSION}
 COPY --from=rootfs-stage /downloads/s6-overlay/  /
 COPY patch/ /tmp/patch
