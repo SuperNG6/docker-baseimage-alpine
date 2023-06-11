@@ -1,1 +1,0 @@
-Alpine version: 3.18
