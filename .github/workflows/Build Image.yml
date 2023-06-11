@@ -74,19 +74,19 @@ jobs:
             superng6/alpine:${{ steps.set-version.outputs.version }}
             superng6/alpine:latest
 
-      - name: 获取 README 内容
-        run: |
-          README_CONTENT=$(cat README.md)
-          echo "::set-output name=readme::$README_CONTENT"
-
-      - name: 更新 Docker Hub 镜像仓库描述
+      # 更新 Docker Hub 描述
+      - name: 更新 Docker Hub 描述
         if: steps.set-version.outputs.status == 'success'
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
+          DOCKERHUB_REPO: superng6/alpine
         run: |
-          DOCKERHUB_TOKEN=${{ secrets.DOCKERHUB_TOKEN }}
-          REPO_NAME="superng6/alpine"
-          README_CONTENT="${{ steps.get-readme.outputs.readme }}"
-          
-          # 构建更新描述的 API 请求
-          API_URL="https://hub.docker.com/v2/repositories/$REPO_NAME/"
-          DATA="{\"description\":\"$README_CONTENT\"}"
-          curl -s -X PATCH -H "Content-Type: application/json" -H "Authorization: Bearer $DOCKERHUB_TOKEN" -d "$DATA" "$API_URL"
+          # 安装 jq
+          sudo apt-get install -y jq
+          # 获取 README.md 的内容
+          DESCRIPTION=$(<README.md)
+          # 获取 Docker Hub 的 token
+          TOKEN=$(curl -s -H "Content-Type: application/json" -X POST -d '{"username": "'${DOCKERHUB_USERNAME}'", "password": "'${DOCKERHUB_PASSWORD}'"}' https://hub.docker.com/v2/users/login/ | jq -r .token)
+          # 更新 Docker Hub 描述
+          curl -s -H "Authorization: JWT ${TOKEN}" -X PATCH -d '{"full_description": "'${DESCRIPTION}'"}' https://hub.docker.com/v2/repositories/${DOCKERHUB_REPO}/
