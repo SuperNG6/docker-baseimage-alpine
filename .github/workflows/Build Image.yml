@@ -79,7 +79,7 @@ jobs:
         if: steps.set-version.outputs.status == 'success'
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           DOCKERHUB_REPO: superng6/alpine
         run: |
           # 安装 jq
@@ -89,6 +89,6 @@ jobs:
           # 将描述内容写入 JSON 文件
           echo '{ "full_description": "'"${DESCRIPTION//$'\n'/\\n'}"'" }' > description.json
           # 获取 Docker Hub 的 token
-          TOKEN=$(curl -s -H "Content-Type: application/json" -X POST -d '{"username": "'${DOCKERHUB_USERNAME}'", "password": "'${DOCKERHUB_PASSWORD}'"}' https://hub.docker.com/v2/users/login/ | jq -r .token)
+          TOKEN=$(curl -s -H "Content-Type: application/json" -X POST -d '{"username": "'${DOCKERHUB_USERNAME}'", "password": "'${DOCKERHUB_TOKEN}'"}' https://hub.docker.com/v2/users/login/ | jq -r .token)
           # 更新 Docker Hub 描述
           curl -s -H "Authorization: JWT ${TOKEN}" -X PATCH -d @description.json https://hub.docker.com/v2/repositories/${DOCKERHUB_REPO}/
