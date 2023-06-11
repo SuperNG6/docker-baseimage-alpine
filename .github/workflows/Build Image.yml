@@ -73,3 +73,20 @@ jobs:
           tags: |
             superng6/alpine:${{ steps.set-version.outputs.version }}
             superng6/alpine:latest
+
+      - name: 获取 README 内容
+        run: |
+          README_CONTENT=$(cat README.md)
+          echo "::set-output name=readme::$README_CONTENT"
+
+      - name: 更新 Docker Hub 镜像仓库描述
+        if: steps.set-version.outputs.status == 'success'
+        run: |
+          DOCKERHUB_TOKEN=${{ secrets.DOCKERHUB_TOKEN }}
+          REPO_NAME="superng6/alpine"
+          README_CONTENT="${{ steps.get-readme.outputs.readme }}"
+          
+          # 构建更新描述的 API 请求
+          API_URL="https://hub.docker.com/v2/repositories/$REPO_NAME/"
+          DATA="{\"description\":\"$README_CONTENT\"}"
+          curl -s -X PATCH -H "Content-Type: application/json" -H "Authorization: Bearer $DOCKERHUB_TOKEN" -d "$DATA" "$API_URL"
