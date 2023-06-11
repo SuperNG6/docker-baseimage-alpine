@@ -54,8 +54,8 @@ jobs:
           DATE=$(date +"%Y-%m-%d")
           VERSION=${{ steps.set-version.outputs.version }}
           echo "Alpine version: $VERSION" > version.txt
-          echo -e "### $DATE 更新\nAlpine v:$VERSION\n" >> README.md
-          git commit -am "$DATE 更新 Alpine v:$VERSION"
+          echo -e "### $DATE 更新\nAlpine v$VERSION\n" >> README.md
+          git commit -am "$DATE 更新 Alpine v$VERSION"
           git remote set-url origin https://x-access-token:${{ secrets.GH_PAT }}@github.com/SuperNG6/docker-baseimage-alpine.git
           git push
 
