@@ -11,7 +11,7 @@ jobs:
     steps:
       # 检出代码
       - name: 检出代码
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       
       # 设置 QEMU
       - name: 设置 QEMU
@@ -56,7 +56,8 @@ jobs:
           echo "Alpine version: $VERSION" > version.txt
           echo -e "### $DATE 更新\nAlpine v:$VERSION\n" >> README.md
           git commit -am "$DATE 更新 Alpine v:$VERSION"
-          git push -v --progress
+          git remote set-url origin https://x-access-token:${{ secrets.GH_PAT }}@github.com/SuperNG6/docker-baseimage-alpine.git
+          git push
 
 
       # 构建并推送 Docker 镜像
