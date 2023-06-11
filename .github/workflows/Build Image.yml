@@ -1,0 +1,74 @@
+name: 构建 Docker 镜像
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 1 * *'
+    
+jobs:
+  buildx:
+    runs-on: ubuntu-latest
+    steps:
+      # 检出代码
+      - name: 检出代码
+        uses: actions/checkout@v2
+      
+      # 设置 QEMU
+      - name: 设置 QEMU
+        uses: docker/setup-qemu-action@v2
+      
+      # 设置 Docker Buildx
+      - name: 设置 Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      # 登录到 Docker Hub
+      - name: 登录到 Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          
+      # 设置版本号
+      - name: 设置版本号
+        id: set-version
+        run: |
+          VERSION=$(curl -s https://nl.alpinelinux.org/alpine/ | grep -o 'v[0-9]\+\.[0-9]\+' | sort -Vr | head -n 1 | sed 's/v//')
+          if [ -z "$VERSION" ]; then
+            echo "Failed to fetch Alpine version"
+            exit 1
+          fi
+          CURRENT_VERSION=$(cat version.txt)
+          if [[ "$VERSION" == "$CURRENT_VERSION" ]]; then
+            echo "::set-output name=status::no-change"
+          else
+            echo "::set-output name=version::$VERSION"
+            echo "::set-output name=status::success"
+          fi
+
+      # 更新版本号
+      - name: 更新版本号
+        if: steps.set-version.outputs.status == 'success'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          DATE=$(date +"%Y-%m-%d")
+          VERSION=${{ steps.set-version.outputs.version }}
+          echo "Alpine version: $VERSION" > version.txt
+          echo -e "### $DATE 更新\nAlpine v:$VERSION\n" >> README.md
+          git commit -am "$DATE 更新 Alpine v:$VERSION"
+          git push -v --progress
+
+
+      # 构建并推送 Docker 镜像
+      - name: 构建 Docker 镜像
+        if: steps.set-version.outputs.status == 'success'
+        uses: docker/build-push-action@v2
+        with:
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm/v7,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ steps.set-version.outputs.version }}
+          tags: |
+            superng6/alpine:${{ steps.set-version.outputs.version }}
+            superng6/alpine:latest
