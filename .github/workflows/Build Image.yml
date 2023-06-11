@@ -2,6 +2,7 @@ name: 构建 Docker 镜像
 
 on:
   workflow_dispatch:
+  push:
   schedule:
     - cron: '0 0 1 * *'
     
@@ -39,44 +40,43 @@ jobs:
           fi
           CURRENT_VERSION=$(cat version.txt)
           if [[ "$VERSION" == "$CURRENT_VERSION" ]]; then
-            echo "::set-output name=status::no-change"
+            echo "status=no-change" >> $GITHUB_ENV
           else
-            echo "::set-output name=version::$VERSION"
-            echo "::set-output name=status::success"
+            echo "version=$VERSION" >> $GITHUB_ENV
+            echo "status=success" >> $GITHUB_ENV
           fi
 
       # 更新版本号
       - name: 更新版本号
-        if: steps.set-version.outputs.status == 'success'
+        if: ${{ env.status == 'success' }}
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           DATE=$(date +"%Y-%m-%d")
-          VERSION=${{ steps.set-version.outputs.version }}
+          VERSION=${{ env.version }}
           echo "Alpine version: $VERSION" > version.txt
           echo -e "### $DATE 更新\nAlpine v$VERSION\n" >> README.md
           git commit -am "$DATE 更新 Alpine v$VERSION"
           git remote set-url origin https://x-access-token:${{ secrets.GH_PAT }}@github.com/SuperNG6/docker-baseimage-alpine.git
           git push
 
-
       # 构建并推送 Docker 镜像
       - name: 构建 Docker 镜像
-        if: steps.set-version.outputs.status == 'success'
+        if: ${{ env.status == 'success' }}
         uses: docker/build-push-action@v2
         with:
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm/v7,linux/arm64
           push: true
           build-args: |
-            VERSION=${{ steps.set-version.outputs.version }}
+            VERSION=${{ env.version }}
           tags: |
-            superng6/alpine:${{ steps.set-version.outputs.version }}
+            superng6/alpine:${{ env.version }}
             superng6/alpine:latest
 
       # 更新 Docker Hub 描述
       - name: 更新 Docker Hub 描述
-        if: steps.set-version.outputs.status == 'success'
+        if: ${{ env.status == 'success' }}
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -91,4 +91,4 @@ jobs:
           # 获取 Docker Hub 的 token
           TOKEN=$(curl -s -H "Content-Type: application/json" -X POST -d '{"username": "'${DOCKERHUB_USERNAME}'", "password": "'${DOCKERHUB_TOKEN}'"}' https://hub.docker.com/v2/users/login/ | jq -r .token)
           # 更新 Docker Hub 描述
-          curl -s -H "Authorization: JWT ${TOKEN}" -X PATCH -d @description.json https://hub.docker.com/v2/repositories/${DOCKERHUB_REPO}/
+          curl -s -H "Authorization: JWT ${TOKEN}" -H "Content-Type: application/json" -X PATCH -d @description.json https://hub.docker.com/v2/repositories/${DOCKERHUB_REPO}/
