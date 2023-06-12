@@ -74,21 +74,3 @@ jobs:
             superng6/alpine:${{ env.version }}
             superng6/alpine:latest
 
-      # 更新 Docker Hub 描述
-      - name: 更新 Docker Hub 描述
-        if: ${{ env.status == 'success' }}
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-          DOCKERHUB_REPO: superng6/alpine
-        run: |
-          # 安装 jq
-          sudo apt-get install -y jq
-          # 获取 README.md 的内容
-          DESCRIPTION=$(<README.md)
-          # 用 jq 构造 JSON 文件
-          echo "${DESCRIPTION}" | jq -Rs . > description.json
-          # 获取 Docker Hub 的 token
-          TOKEN=$(curl -s -H "Content-Type: application/json" -X POST -d '{"username": "'${DOCKERHUB_USERNAME}'", "password": "'${DOCKERHUB_TOKEN}'"}' https://hub.docker.com/v2/users/login/ | jq -r .token)
-          # 更新 Docker Hub 描述
-          curl -s -H "Authorization: JWT ${TOKEN}" -H "Content-Type: application/json" -X PATCH -d @description.json https://hub.docker.com/v2/repositories/${DOCKERHUB_REPO}/

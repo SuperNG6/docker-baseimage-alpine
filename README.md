@@ -10,24 +10,5 @@
 [appurl]: https://alpinelinux.org
 
 [![linuxserver.io](https://raw.githubusercontent.com/linuxserver/docker-templates/master/linuxserver.io/img/linuxserver_medium.png?v=4&s=4000)][linuxserverurl]
-### 2023-06-11 更新
-Alpine v3.18
 
-### 2023-06-11 更新
-Alpine v3.18
-
-### 2023-06-11 更新
-Alpine v3.18
-
-### 2023-06-11 更新
-Alpine v3.18
-
-### 2023-06-11 更新
-Alpine v3.18
-
-### 2023-06-11 更新
-Alpine v3.18
-
-### 2023-06-11 更新
-Alpine v3.18
 
