@@ -12,7 +12,7 @@ jobs:
     steps:
       # 检出代码
       - name: 检出代码
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       
       # 设置 QEMU
       - name: 设置 QEMU
