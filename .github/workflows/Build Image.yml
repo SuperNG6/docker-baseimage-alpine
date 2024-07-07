@@ -16,7 +16,7 @@ jobs:
       
       # 设置 QEMU
       - name: 设置 QEMU
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v3
       
       # 设置 Docker Buildx
       - name: 设置 Docker Buildx
