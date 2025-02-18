@@ -1,5 +1,5 @@
 ARG VERSION
-FROM alpine:${VERSION} as rootfs-stage
+FROM alpine:${VERSION} AS rootfs-stage
 WORKDIR /downloads
 # install packages
 RUN \
