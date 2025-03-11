@@ -17,9 +17,6 @@ RUN set -ex \
 	&& chmod +x install.sh \
 	&& bash install.sh
 
-
-
-
 # Runtime stage
 ARG VERSION
 FROM alpine:${VERSION}
@@ -42,6 +39,8 @@ RUN \
  echo "**** install runtime packages ****" && \
  apk add --no-cache \
 	bash \
+	curl \
+	wget \
 	ca-certificates \
 	coreutils \
 	procps \
