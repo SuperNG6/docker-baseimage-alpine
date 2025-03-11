@@ -33,7 +33,6 @@ TERM="xterm"
 RUN \
  echo "**** install build packages ****" && \
  apk add --no-cache --virtual=build-dependencies \
-	curl \
 	patch \
 	tar && \
  echo "**** install runtime packages ****" && \
