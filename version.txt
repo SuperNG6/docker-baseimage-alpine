@@ -1,1 +1,1 @@
-Alpine version: 3.21
+Alpine version: 3.22
