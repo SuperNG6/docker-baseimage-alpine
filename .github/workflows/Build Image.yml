@@ -54,11 +54,10 @@ jobs:
         run: |
           set -e # 如果任何命令失败，则立即退出脚本
 
-          echo "正在从 Docker Hub API 获取最新的 Alpine 标签..."
-          # 查询 Docker Hub API v2, 获取标签, 过滤数字版本, 排序, 取最新
-          # 使用 -f (fail fast) 确保 curl 在 HTTP 错误时退出
-          # 使用 --retry 和 --retry-delay 增加网络稳定性
-          API_URL='https://hub.docker.com/v2/repositories/library/alpine/tags/?page_size=100&ordering=last_updated&name=^[0-9]+\.[0-9]+$'
+          echo "正在从 Docker Hub API 获取 Alpine 标签 (不过滤名称)..."
+          # 修改 API URL: 移除 name 参数，可能增加 page_size 获取更多标签
+          # 注意：如果标签极多，可能需要处理分页 (next URL)，但通常前 100-250 个足够
+          API_URL='https://hub.docker.com/v2/repositories/library/alpine/tags/?page_size=250&ordering=last_updated'
           RESPONSE=$(curl -fsSL --retry 3 --retry-delay 2 "$API_URL")
 
           if [ -z "$RESPONSE" ]; then
@@ -66,14 +65,18 @@ jobs:
             exit 1
           fi
 
-          # 解析 JSON, 提取 name 字段, 过滤掉非 X.Y 的 (再次确认), 排序取最新
+          echo "正在解析响应并过滤版本标签 (格式 X.Y)..."
+          # 解析 JSON，提取所有 name 字段，然后在本地用 grep 过滤，再排序取最新
           LATEST_TAG=$(echo "$RESPONSE" | jq -r '.results[].name' | grep -E '^[0-9]+\.[0-9]+$' | sort -Vr | head -n 1)
 
           if [ -z "$LATEST_TAG" ]; then
-            echo "::error::无法从 Docker Hub API 响应中解析出有效的 Alpine 版本标签。"
+            # 如果这里 LATEST_TAG 仍然为空，可能是 API 真的没返回 X.Y 格式标签，或者 jq/grep/sort 出错
+            echo "::error::无法从 Docker Hub API 响应中解析出有效的 Alpine 版本标签 (X.Y 格式)。"
+            echo "Raw response JSON:"
+            echo "$RESPONSE" | jq . # 打印格式化的 JSON 供调试
             exit 1
           fi
-          echo "从 Docker Hub 获取到的最新版本: $LATEST_TAG"
+          echo "从 Docker Hub 获取到的最新有效版本: $LATEST_TAG"
 
           # 读取当前仓库中的版本
           if [ -f version.txt ]; then
@@ -93,7 +96,7 @@ jobs:
             echo "version=$LATEST_TAG" >> $GITHUB_OUTPUT
             echo "status=success" >> $GITHUB_OUTPUT
           fi
-        shell: bash # 明确指定 shell
+        shell: bash
 
       # 步骤 7: 如果有新版本，更新仓库中的版本文件和 README
       - name: 更新版本文件和 README
