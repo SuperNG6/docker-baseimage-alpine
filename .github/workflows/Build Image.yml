@@ -25,7 +25,6 @@ jobs:
         with:
           # 需要获取提交历史来比较版本，并推送更改
           fetch-depth: 0 # 获取所有历史记录，以便进行提交和推送
-          token: ${{ secrets.GH_PAT }} # 使用 PAT 检出，以便后续推送
 
       # 步骤 2: 安装必要的工具
       - name: 安装 jq
