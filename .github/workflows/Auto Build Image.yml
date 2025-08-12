@@ -1,0 +1,127 @@
+name: 自动构建 Docker 镜像
+
+on:
+  # 允许手动触发
+  workflow_dispatch:
+  # 推送到默认分支时触发 (除了 Action 自身的提交)
+  push:
+    branches:
+      - main
+  # 定期触发 (每月1号 00:00 UTC)
+  schedule:
+    - cron: '0 0 1 * *'
+
+jobs:
+  # 任务一：快速检查版本
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      new_version: ${{ steps.check.outputs.new_version }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 jq
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends jq
+
+      - name: 获取最新 Alpine 版本并比较
+        id: check
+        run: |
+          set -e
+          API_URL='https://hub.docker.com/v2/repositories/library/alpine/tags/?page_size=100&ordering=last_updated'
+          RESPONSE=$(curl -fsSL "$API_URL")
+          LATEST_TAG=$(echo "$RESPONSE" | jq -r '.results[].name' | grep -E '^[0-9]+\.[0-9]+$' | sort -Vr | head -n 1)
+          
+          if [ -z "$LATEST_TAG" ]; then
+            echo "::error::无法从 Docker Hub API 解析出有效的 Alpine 版本。"
+            exit 1
+          fi
+          echo "Docker Hub 最新版本: $LATEST_TAG"
+
+          CURRENT_VERSION=""
+          if [ -f version.txt ]; then
+            CURRENT_VERSION=$(cat version.txt)
+          fi
+          echo "当前仓库版本: ${CURRENT_VERSION:-'未找到'}"
+
+          if [[ "$LATEST_TAG" == "$CURRENT_VERSION" ]]; then
+            echo "版本未变化，无需构建。"
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          else
+            echo "检测到新版本，准备构建。"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "new_version=$LATEST_TAG" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+
+  # 任务二：构建、推送和提交 (仅在需要时运行)
+  buildx:
+    # 依赖于 check-version 任务
+    needs: check-version
+    # 只有在 check-version 任务输出 should_build=true 时才运行此任务
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 设置 QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: 设置 Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          install: true
+
+      - name: 登录到 Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 构建并推送 Docker 镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm/v7,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ needs.check-version.outputs.new_version }}
+          tags: |
+            superng6/alpine:${{ needs.check-version.outputs.new_version }}
+            superng6/alpine:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 更新版本文件和 README 并提交
+        run: |
+          set -e
+          NEW_VERSION=${{ needs.check-version.outputs.new_version }}
+          
+          echo "更新 version.txt..."
+          echo "$NEW_VERSION" > version.txt
+          
+          echo "执行 update-readme.sh 脚本..."
+          chmod +x ./update-readme.sh
+          ./update-readme.sh "$NEW_VERSION"
+          
+          echo "配置 Git..."
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          echo "提交并推送更改..."
+          git add version.txt README.md
+          if git diff --staged --quiet; then
+            echo "没有文件更改需要提交。"
+          else
+            git commit -m "更新 Alpine 至 v$NEW_VERSION [skip ci]"
+            git push
+          fi
