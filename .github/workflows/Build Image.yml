@@ -1,85 +1,196 @@
-name: 手动构建 Docker 镜像
+name: 构建 Docker 镜像
 
 on:
-  # 允许手动触发
   workflow_dispatch:
-    
-jobs:
-  buildx:
-    runs-on: ubuntu-latest
-    permissions:
-      # 不再需要写权限，因为我们不再提交文件
-      contents: read
-      packages: write # 推送到 GHCR 需要这个权限
+  # 定期触发 (每天 UTC 10:30)
+  schedule:
+    - cron: "30 10 * * *"
+env:
+  # Docker Hub 镜像名称
+  DOCKER_IMAGE: superng6/alpine
+  # GitHub Container Registry (ghcr.io) 镜像名称
+  GHCR_IMAGE: ghcr.io/superng6/alpine
 
+jobs:
+  check_version:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.version-check.outputs.should_build }}
+      full_version: ${{ steps.version-check.outputs.full_version }}
+      minor_version: ${{ steps.version-check.outputs.minor_version }}
     steps:
-      # 步骤 1: 检出代码
       - name: 检出代码
         uses: actions/checkout@v4
 
-      # 步骤 2: 安装必要的工具
-      - name: 安装 jq
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends jq
+      - name: 检查版本并决定是否构建
+        id: version-check
+        run: bash .github/workflows/version-check.sh ${{ env.DOCKER_IMAGE }}
 
-      # 步骤 3: 设置 QEMU (用于多平台构建)
+  build:
+    runs-on: ubuntu-latest
+    # 只有当需要构建时才运行
+    needs: check_version
+    if: needs.check_version.outputs.should_build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
+          - linux/arm/v7
+          - linux/386
+          - linux/ppc64le
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
       - name: 设置 QEMU
         uses: docker/setup-qemu-action@v3
 
-      # 步骤 4: 设置 Docker Buildx (增强构建功能)
       - name: 设置 Docker Buildx
         uses: docker/setup-buildx-action@v3
-        with:
-          install: true
 
-      # 步骤 5: 登录到 Docker Hub
       - name: 登录到 Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 步骤 6: 获取最新的 Alpine 版本
-      - name: 获取最新的 Alpine 版本
-        id: get-version
-        run: |
-          set -e # 如果任何命令失败，则立即退出脚本
+      - name: 登录到 GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-          echo "正在从 Docker Hub API 获取最新的 Alpine 版本..."
-          API_URL='https://hub.docker.com/v2/repositories/library/alpine/tags/?page_size=100&ordering=last_updated'
-          RESPONSE=$(curl -fsSL --retry 3 --retry-delay 2 "$API_URL")
-
-          if [ -z "$RESPONSE" ]; then
-            echo "::error::无法从 Docker Hub API 获取标签信息。"
-            exit 1
-          fi
-
-          # 解析 JSON，提取所有 name 字段，然后在本地用 grep 过滤，再排序取最新
-          LATEST_TAG=$(echo "$RESPONSE" | jq -r '.results[].name' | grep -E '^[0-9]+\.[0-9]+$' | sort -Vr | head -n 1)
-
-          if [ -z "$LATEST_TAG" ]; then
-            echo "::error::无法从 Docker Hub API 响应中解析出有效的 Alpine 版本标签 (X.Y 格式)。"
-            exit 1
-          fi
-          
-          echo "获取到的最新版本是: $LATEST_TAG"
-          echo "version=$LATEST_TAG" >> $GITHUB_OUTPUT
-        shell: bash
-
-      # 步骤 7: 构建并推送 Docker 镜像
-      - name: 构建并推送 Docker 镜像
+      - name: 构建并推送单架构镜像（by digest）
+        id: build
         uses: docker/build-push-action@v6
         with:
-          context: . # 构建上下文为当前目录
-          file: ./Dockerfile # 指定 Dockerfile 路径
-          platforms: linux/amd64,linux/arm/v7,linux/arm64 # 构建的平台
-          push: true # 推送镜像
-          # 将获取到的新版本作为构建参数传递给 Dockerfile
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ matrix.platform }}
+          # 使用检查到的新版本号
           build-args: |
-            VERSION=${{ steps.get-version.outputs.version }}
-          # 为镜像打上版本标签和 latest 标签
-          tags: |
-            superng6/alpine:${{ steps.get-version.outputs.version }}
-            superng6/alpine:latest
-          # 启用 BuildKit 缓存 (可以加速后续构建)
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            VERSION=${{ needs.check_version.outputs.full_version }}
+          tags: ${{ env.DOCKER_IMAGE }}
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+
+      - name: 导出 digest
+        id: prepare_artifact
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          IMAGE_DIGEST="${digest#*sha256:}"
+          touch "/tmp/digests/${IMAGE_DIGEST}"
+
+          # 计算平台标识符
+          PLATFORM_PAIR=$(echo "${{ matrix.platform }}" | tr '/' '-')
+          echo "platform_pair=${PLATFORM_PAIR}" >> $GITHUB_OUTPUT
+
+      - name: 上传 digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ steps.prepare_artifact.outputs.platform_pair }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  merge:
+    runs-on: ubuntu-latest
+    # 依赖检查版本和构建作业
+    needs: [check_version, build]
+    if: needs.check_version.outputs.should_build == 'true'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: 下载 digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: 设置 Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录到 Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 登录到 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 合并 manifest 并推送
+        working-directory: /tmp/digests
+        run: |
+          echo "Digests found:"
+          ls -1 .
+          # 使用检查到的新版本号
+          docker buildx imagetools create \
+            -t "${{ env.DOCKER_IMAGE }}:${{ needs.check_version.outputs.full_version }}" \
+            -t "${{ env.DOCKER_IMAGE }}:${{ needs.check_version.outputs.minor_version }}" \
+            -t "${{ env.DOCKER_IMAGE }}:latest" \
+            -t "${{ env.GHCR_IMAGE }}:${{ needs.check_version.outputs.full_version }}" \
+            -t "${{ env.GHCR_IMAGE }}:${{ needs.check_version.outputs.minor_version }}" \
+            -t "${{ env.GHCR_IMAGE }}:latest" \
+            $(printf '${{ env.DOCKER_IMAGE }}@sha256:%s ' *)
+
+      - name: 检查镜像
+        run: |
+          docker buildx imagetools inspect ${{ env.DOCKER_IMAGE }}:${{ needs.check_version.outputs.full_version }}
+          docker buildx imagetools inspect ${{ env.GHCR_IMAGE }}:${{ needs.check_version.outputs.full_version }}
+
+  # =========================================================
+  # 更新 README.md
+  # =========================================================
+  update_readme:
+    runs-on: ubuntu-latest
+    # 依赖检查版本和合并作业
+    needs: [check_version, merge]
+    if: needs.check_version.outputs.should_build == 'true'
+    permissions:
+      contents: write
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 运行 README 更新脚本
+        run: bash .github/workflows/update-readme.sh ${{ needs.check_version.outputs.full_version }}
+
+      - name: 提交并推送 README.md
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          # 检查是否有文件变动
+          if [[ -n $(git status --porcelain README.md) ]]; then
+            git add README.md
+            git commit -m "docs: 自动更新 README，添加 Alpine 版本 v${{ needs.check_version.outputs.full_version }}"
+            git push
+          else
+            echo "README.md 文件无变化，无需提交。"
+          fi
+
+  # =========================================================
+  # 通知作业 - 记录检查结果
+  # =========================================================
+  notify:
+    runs-on: ubuntu-latest
+    needs: [check_version]
+    if: always()  # 无论检查结果如何都运行
+    steps:
+      - name: 记录检查结果
+        run: |
+          if [ "${{ needs.check_version.outputs.should_build }}" == "true" ]; then
+            echo "✅ 检测到新版本 ${{ needs.check_version.outputs.full_version }}，已触发构建流程"
+          else
+            echo "ℹ️  版本检查完成，当前版本已是最新，无需构建"
+          fi

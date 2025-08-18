@@ -11,19 +11,104 @@
 
 [![linuxserver.io](https://raw.githubusercontent.com/linuxserver/docker-templates/master/linuxserver.io/img/linuxserver_medium.png?v=4&s=4000)][linuxserverurl]
 
+## 如何使用此镜像
+
+这是一个基于最新 Alpine Linux 和 s6-overlay v2 构建的轻量级基础镜像，旨在为各种应用提供一个稳定、安全的运行环境。
+
+### 获取镜像
+
+你可以通过 Docker Hub 或 GitHub Container Registry (GHcr.io) 来拉取此镜像。
+
+#### 从 Docker Hub 拉取
+
+```bash
+# 拉取 latest 标签（推荐）
+docker pull superng6/alpine:latest
+
+# 拉取指定版本标签
+docker pull superng6/alpine:3.22.1
+```
+
+#### 从 GHCR.io 拉取
+
+```bash
+# 拉取 latest 标签
+docker pull ghcr.io/superng6/alpine:latest
+
+# 拉取指定版本标签
+docker pull ghcr.io/superng6/alpine:3.22.1
+```
+
+### 运行容器
+
+此镜像设计为基础镜像，可用于构建你自己的应用程序。以下是一个简单的交互式运行示例：
+
+```bash
+docker run -it --rm superng6/alpine:latest /bin/bash
+```
+进入容器后，你可以查看 Alpine 版本和系统环境。
+
+### 作为基础镜像使用
+
+在你的 `Dockerfile` 中，将此镜像作为 `FROM` 指令的基础。
+
+**示例 `Dockerfile`:**
+
+```dockerfile
+# 使用特定版本以确保构建的可重复性
+FROM superng6/alpine:3.22.1
+
+# 设置维护者信息
+LABEL maintainer="你的名字 <your-email@example.com>"
+
+# 复制你的应用程序代码
+COPY ./myapp /app/myapp
+
+# 安装应用程序所需的依赖
+# RUN apk add --no-cache python3 py3-pip
+
+# 设置 s6-overlay 服务
+# COPY ./my-service.sh /etc/cont-init.d/99-my-service
+
+# 定义容器启动时的主命令
+CMD ["/app/myapp"]
+```
+
+### 支持的 CPU 架构
+
+我们通过 GitHub Actions 自动构建并推送了支持多种 CPU 架构的多平台镜像。Docker 会自动为你选择与你系统匹配的架构。
+
+目前支持的架构包括：
+
+- **`linux/amd64`** (x86_64, 常见 PC 和服务器)
+- **`linux/arm64`** (aarch64, Apple Silicon, Raspberry Pi 4/5, 很多云服务器)
+- **`linux/arm/v7`** (armhf, Raspberry Pi 2/3)
+- **`linux/386`** (i386, 32位 x86 系统)
+- **`linux/ppc64le`** (PowerPC)
+
+你可以使用 `docker buildx imagetools inspect` 命令来查看镜像支持的所有架构：
+
+```bash
+docker buildx imagetools inspect superng6/alpine:latest
+```
+
+---
+
+
 ### 2023-10-01 更新
-Alpine v3.18
+Alpine v3.18.0
 
 ### 2024-04-01 更新
-Alpine v3.19
+Alpine v3.19.0
 
 ### 2024-10-01 更新
-Alpine v3.20
+Alpine v3.20.0
 
 ### 2025-04-01 更新
-Alpine v3.21
+Alpine v3.21.0
 
 ### 2025-05-01 更新
-Alpine v3.22
+Alpine v3.22.0
 
-
+### 2025-08-18 更新
+Alpine v3.22.1

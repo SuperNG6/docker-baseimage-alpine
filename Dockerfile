@@ -1,12 +1,18 @@
 ARG VERSION=latest
+ARG TARGETARCH 
+
+# Dockerfile for s6-overlay
 FROM alpine:${VERSION} AS rootfs-stage
+
+# Re-declare TARGETARCH in this stage and set as environment variable
+ARG TARGETARCH
+ENV TARGETARCH=${TARGETARCH}
+
 WORKDIR /downloads
 # install packages
 RUN \
  apk add --no-cache \
 	bash \
-	curl \
-	tzdata \
 	wget \
 	ca-certificates \
 	xz
@@ -23,7 +29,6 @@ FROM alpine:${VERSION}
 COPY --from=rootfs-stage /downloads/s6-overlay/  /
 COPY patch/ /tmp/patch
 LABEL maintainer="NG6"
-
 
 # environment variables
 ENV PS1="$(whoami)@$(hostname):$(pwd)\\$ " \
