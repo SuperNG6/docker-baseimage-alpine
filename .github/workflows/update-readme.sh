@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# 当任何命令失败时，立即退出脚本
-set -e
-
 # --- 脚本配置 ---
 README_FILE="README.md"
 NEW_VERSION=$1
@@ -28,18 +25,11 @@ echo "正在更新 README.md，添加新版本 ${NEW_VERSION}..."
 # --- 准备要插入的内容 ---
 # 获取当前日期，格式为 YYYY-MM-DD
 CURRENT_DATE=$(date +'%Y-%m-%d')
-# 使用 "here document" (cat <<EOF) 来格式化多行文本，比用多个 echo 更清晰
-NEW_CONTENT=$(cat <<EOF
-### ${CURRENT_DATE} 更新
-Alpine v${NEW_VERSION}
-
-EOF
-)
 
 # --- 使用 sed 命令在标记行之前插入新内容 ---
-# 这个命令会查找包含 MARKER_LINE 的行，然后在它前面（i 表示 insert）插入 NEW_CONTENT 的内容。
-# sed -i 表示直接修改文件（in-place）。
-sed -i "/${MARKER_LINE}/i ${NEW_CONTENT}" "$README_FILE"
+# 使用 sed 的插入命令，将换行符用 \n 表示
+# GNU sed 需要在每行末尾使用 \ 来续行
+sed -i "/${MARKER_LINE}/i ### ${CURRENT_DATE} 更新\\nAlpine v${NEW_VERSION}\\n" "$README_FILE"
 
 echo "README.md 文件已成功更新。"
 cat "$README_FILE"

@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# 任何命令执行失败时，立即退出脚本
-set -e
-
 # 将调试信息输出到标准错误流 (stderr)
 echo "正在从 Docker Hub API 获取最新的 Alpine 版本..." >&2
 
