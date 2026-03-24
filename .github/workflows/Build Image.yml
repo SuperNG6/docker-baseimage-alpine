@@ -2,9 +2,9 @@ name: 构建 Docker 镜像
 
 on:
   workflow_dispatch:
-  # 定期触发 (每天 UTC 10:30)
+  # 定期触发 (每月1日 UTC 10:30)
   schedule:
-    - cron: "30 10 * * *"
+    - cron: "30 10 1 * *"
 env:
   # Docker Hub 镜像名称
   DOCKER_IMAGE: superng6/alpine
