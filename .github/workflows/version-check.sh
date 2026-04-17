@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 版本检查脚本
-# 用于比较官方 Alpine 版本与我们镜像的版本，决定是否需要构建新镜像
+# 用于获取官方 Alpine 最新版本，并每月强制构建镜像
 
 # 检查参数
 if [ -z "$1" ]; then
@@ -40,49 +40,9 @@ OUR_VERSION=$(echo "$OUR_RESPONSE" | jq -r '.results[].name' | grep -E '^[0-9]+(
 
 echo "我们的镜像最新版本: $OUR_VERSION" >&2
 
-# 版本比较函数
-version_compare() {
-    if [[ $1 == $2 ]]; then
-        return 0  # 版本相等
-    fi
-    local IFS=.
-    local i ver1=($1) ver2=($2)
-    # 填充版本数组到相同长度
-    for ((i=${#ver1[@]}; i<${#ver2[@]}; i++)); do
-        ver1[i]=0
-    done
-    for ((i=${#ver2[@]}; i<${#ver1[@]}; i++)); do
-        ver2[i]=0
-    done
-    # 逐个比较版本号组件
-    for ((i=0; i<${#ver1[@]}; i++)); do
-        if [[ -z ${ver2[i]} ]]; then
-            ver2[i]=0
-        fi
-        if ((10#${ver1[i]} > 10#${ver2[i]})); then
-            return 1  # 第一个版本更高
-        fi
-        if ((10#${ver1[i]} < 10#${ver2[i]})); then
-            return 2  # 第二个版本更高
-        fi
-    done
-    return 0  # 版本相等
-}
-
-# 比较版本
-version_compare "$OFFICIAL_VERSION" "$OUR_VERSION"
-comparison_result=$?
-
-if [ $comparison_result -eq 1 ]; then
-    echo "官方版本 ($OFFICIAL_VERSION) 比我们的版本 ($OUR_VERSION) 更高，需要构建新镜像" >&2
-    SHOULD_BUILD="true"
-elif [ $comparison_result -eq 0 ]; then
-    echo "版本相同 ($OFFICIAL_VERSION)，无需构建" >&2
-    SHOULD_BUILD="false"
-else
-    echo "我们的版本 ($OUR_VERSION) 比官方版本 ($OFFICIAL_VERSION) 更高或相等，无需构建" >&2
-    SHOULD_BUILD="false"
-fi
+# 每月强制构建，不论版本是否相同
+echo "每月定期构建，无论版本是否相同，直接触发构建 (官方版本: $OFFICIAL_VERSION，我们的版本: $OUR_VERSION)" >&2
+SHOULD_BUILD="true"
 
 # 计算次版本号
 MINOR_VERSION=$(echo "$OFFICIAL_VERSION" | cut -d '.' -f 1-2)
