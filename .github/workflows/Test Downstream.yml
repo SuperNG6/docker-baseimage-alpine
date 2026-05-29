@@ -1,0 +1,149 @@
+name: 测试下游 Aria2 镜像
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - "install.sh"
+      - "root/**"
+      - ".github/workflows/Test Downstream.yml"
+  push:
+    branches:
+      - v3
+    paths:
+      - "Dockerfile"
+      - "install.sh"
+      - "root/**"
+      - ".github/workflows/Test Downstream.yml"
+
+permissions:
+  contents: read
+
+env:
+  BASE_TEST_IMAGE: local/superng6-alpine:test
+  DOWNSTREAM_REPO: SuperNG6/docker-aria2
+  DOWNSTREAM_REF: dev-refactor-20260521
+  DOWNSTREAM_DIR: downstream/docker-aria2
+  DOWNSTREAM_TEST_IMAGE: local/superng6-aria2:test
+
+jobs:
+  aria2-compat:
+    name: 替换 base 并测试 docker-aria2
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: 检出 base 镜像代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 构建当前 base 镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            VERSION=3.23.4
+          tags: ${{ env.BASE_TEST_IMAGE }}
+          load: true
+
+      - name: 检出 docker-aria2 测试分支
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.DOWNSTREAM_REPO }}
+          ref: ${{ env.DOWNSTREAM_REF }}
+          path: ${{ env.DOWNSTREAM_DIR }}
+
+      - name: 替换 docker-aria2 的 base 镜像
+        working-directory: ${{ env.DOWNSTREAM_DIR }}
+        run: |
+          set -euo pipefail
+          echo "替换前："
+          grep -nE '^FROM ' Dockerfile
+
+          perl -0pi -e 's{^(FROM\s+)(?:ghcr\.io/)?superng6/alpine(?::[^\s]+)?(\s*(?:AS\s+\S+)?)$}{$1$ENV{BASE_TEST_IMAGE}$2}gmi' Dockerfile
+
+          echo "替换后："
+          grep -nE '^FROM ' Dockerfile
+          if grep -qE '^(FROM\s+)(?:ghcr\.io/)?superng6/alpine' Dockerfile; then
+            echo "仍存在未替换的 superng6/alpine FROM"
+            exit 1
+          fi
+
+          # dev-refactor-20260521 当前这些文件在 git 中是 100644；
+          # s6-overlay v3 会直接执行它们，因此测试前在临时工作区补齐执行位。
+          find root/etc/cont-init.d -type f -exec chmod +x {} +
+          find root/etc/services.d -type f -name run -exec chmod +x {} +
+
+      - name: 构建 docker-aria2 standard 镜像
+        working-directory: ${{ env.DOWNSTREAM_DIR }}
+        run: |
+          set -euo pipefail
+          docker build \
+            --build-arg VARIANT=standard \
+            --build-arg A2B_DEFAULT=false \
+            -t "${DOWNSTREAM_TEST_IMAGE}" \
+            .
+
+      - name: 启动 docker-aria2 容器
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/aria2-smoke/config /tmp/aria2-smoke/downloads
+          docker run -d \
+            --name aria2-downstream-smoke \
+            -p 16800:6800 \
+            -p 18080:8080 \
+            -e PUID=1001 \
+            -e PGID=1001 \
+            -e SECRET=smoketoken \
+            -e UT=false \
+            -e RUT=false \
+            -e WEBUI=true \
+            -e PORT=6800 \
+            -e WEBUI_PORT=8080 \
+            -v /tmp/aria2-smoke/config:/config \
+            -v /tmp/aria2-smoke/downloads:/downloads \
+            "${DOWNSTREAM_TEST_IMAGE}"
+
+      - name: 检查 docker-aria2 启动与 RPC
+        run: |
+          set -euo pipefail
+          for i in {1..30}; do
+            if docker ps --filter "name=aria2-downstream-smoke" --filter "status=running" --format '{{.Names}}' | grep -qx aria2-downstream-smoke \
+              && curl -fsS "http://127.0.0.1:16800/jsonrpc" \
+                -H 'Content-Type: application/json' \
+                --data '{"jsonrpc":"2.0","id":"smoke","method":"aria2.getVersion","params":["token:smoketoken"]}' \
+                | grep -q '"result"'; then
+              uid="$(docker exec aria2-downstream-smoke id -u abc)"
+              gid="$(docker exec aria2-downstream-smoke id -g abc)"
+              test "${uid}" = "1001"
+              test "${gid}" = "1001"
+              curl -fsS "http://127.0.0.1:18080/" >/dev/null
+              exit 0
+            fi
+            docker logs --tail 80 aria2-downstream-smoke || true
+            sleep 2
+          done
+
+          echo "docker-aria2 smoke test timed out"
+          docker logs aria2-downstream-smoke || true
+          exit 1
+
+      - name: 运行 docker-aria2 容器内库测试
+        working-directory: ${{ env.DOWNSTREAM_DIR }}
+        run: |
+          set -euo pipefail
+          docker cp .github/scripts/in-container-lib-test.sh aria2-downstream-smoke:/tmp/in-container-lib-test.sh
+          docker exec aria2-downstream-smoke bash /tmp/in-container-lib-test.sh
+
+      - name: 输出容器日志
+        if: always()
+        run: docker logs aria2-downstream-smoke || true
+
+      - name: 清理容器
+        if: always()
+        run: docker rm -f aria2-downstream-smoke || true

@@ -1,23 +1,30 @@
 ARG VERSION=latest
-ARG TARGETARCH 
+ARG TARGETARCH
+ARG TARGETVARIANT
+ARG S6_OVERLAY_VERSION=3.2.3.0
 
-# Dockerfile for s6-overlay
+# Dockerfile for s6-overlay v3 on the official Alpine image
 FROM alpine:${VERSION} AS rootfs-stage
 
-# Re-declare TARGETARCH in this stage and set as environment variable
 ARG TARGETARCH
-ENV TARGETARCH=${TARGETARCH}
+ARG TARGETVARIANT
+ARG S6_OVERLAY_VERSION
+ENV TARGETARCH=${TARGETARCH} \
+	TARGETVARIANT=${TARGETVARIANT} \
+	S6_OVERLAY_VERSION=${S6_OVERLAY_VERSION}
 
 WORKDIR /downloads
+
 # install packages
 RUN \
  apk add --no-cache \
 	bash \
 	wget \
 	ca-certificates \
+	tar \
 	xz
 
-COPY install.sh  /downloads
+COPY install.sh /downloads
 
 RUN set -ex \
 	&& chmod +x install.sh \
@@ -26,20 +33,18 @@ RUN set -ex \
 # Runtime stage
 ARG VERSION=latest
 FROM alpine:${VERSION}
-COPY --from=rootfs-stage /downloads/s6-overlay/  /
-COPY patch/ /tmp/patch
+COPY --from=rootfs-stage /downloads/s6-overlay/ /
 LABEL maintainer="NG6"
 
 # environment variables
 ENV PS1="$(whoami)@$(hostname):$(pwd)\\$ " \
-HOME="/root" \
-TERM="xterm"
+	HOME="/root" \
+	TERM="xterm" \
+	S6_CMD_WAIT_FOR_SERVICES_MAXTIME="0" \
+	S6_STAGE2_HOOK="/docker-mods" \
+	S6_VERBOSITY=1
 
 RUN \
- echo "**** install build packages ****" && \
- apk add --no-cache --virtual=build-dependencies \
-	patch \
-	tar && \
  echo "**** install runtime packages ****" && \
  apk add --no-cache \
 	bash \
@@ -58,11 +63,7 @@ RUN \
 	/app \
 	/config \
 	/defaults && \
- mv /usr/bin/with-contenv /usr/bin/with-contenvb && \
- patch -u /etc/s6/init/init-stage2 -i /tmp/patch/etc/s6/init/init-stage2.patch && \
  echo "**** cleanup ****" && \
- apk del --purge \
-	build-dependencies && \
  rm -rf \
 	/tmp/*
 

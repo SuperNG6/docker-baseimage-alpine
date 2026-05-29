@@ -1,7 +1,11 @@
-#! /bin/bash
-if [[ -f /var/run/s6/container_environment/UMASK ]] && [[ "$(pwdx $$)" =~ "/run/s6/services/" ]]; then
-  umask $(cat /var/run/s6/container_environment/UMASK)
-  exec /usr/bin/with-contenvb "$@"
-else
-  exec /usr/bin/with-contenvb "$@"
+#!/bin/bash
+
+# Keep LSIO-style UMASK support while delegating to s6-overlay v3's helper.
+if [[ -f /run/s6/container_environment/UMASK ]] &&
+    { [[ "$(pwdx $$ 2>/dev/null)" =~ "/run/s6/legacy-services/" ]] ||
+        [[ "$(pwdx $$ 2>/dev/null)" =~ "/run/s6/services/" ]] ||
+        [[ "$(pwdx $$ 2>/dev/null)" =~ "/servicedirs/svc-" ]]; }; then
+    umask "$(cat /run/s6/container_environment/UMASK)"
 fi
+
+exec /command/with-contenv "$@"
