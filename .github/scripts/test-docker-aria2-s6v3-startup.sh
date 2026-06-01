@@ -6,6 +6,7 @@ image="${2:?image name is required}"
 rpc_url="${3:-http://127.0.0.1:16800/jsonrpc}"
 web_url="${4:-http://127.0.0.1:18080/}"
 secret="${5:-smoketoken}"
+variant="${6:-standard}"
 
 wait_for_container() {
     local last_error="container is not running"
@@ -128,18 +129,56 @@ assert_container_environment() {
 
 assert_process_state() {
     local service_dir="$1"
+    local pid=""
+    local proc_uid=""
+    local proc_gid=""
+    local darkhttpd_pid=""
+    local crond_pid=""
+
     echo "Checking s6-supervised aria2 process state ..."
-    docker exec "${container}" s6-svstat "${service_dir}" | grep -q '^up'
+    echo "aria2 service dir: ${service_dir}"
+    docker exec "${container}" s6-svstat "${service_dir}" | tee /tmp/docker-aria2-svstat.out
+    grep -q '^up' /tmp/docker-aria2-svstat.out
 
     pid="$(docker exec "${container}" pidof aria2c)"
     test -n "${pid}"
     proc_uid="$(docker exec "${container}" sh -c 'awk "/^Uid:/ {print \$2}" "/proc/$1/status"' sh "${pid}")"
     proc_gid="$(docker exec "${container}" sh -c 'awk "/^Gid:/ {print \$2}" "/proc/$1/status"' sh "${pid}")"
+    echo "aria2c pid=${pid} uid=${proc_uid} gid=${proc_gid}"
     test "${proc_uid}" = "1001"
     test "${proc_gid}" = "1001"
 
-    docker exec "${container}" pgrep -x darkhttpd >/dev/null
-    docker exec "${container}" pgrep -x crond >/dev/null
+    darkhttpd_pid="$(docker exec "${container}" pgrep -x darkhttpd)"
+    crond_pid="$(docker exec "${container}" pgrep -x crond)"
+    echo "darkhttpd pid=${darkhttpd_pid}"
+    echo "crond pid=${crond_pid}"
+}
+
+assert_aria2b_state() {
+    local aria2b_service_dir=""
+
+    echo "Checking aria2b state for docker-aria2 ${variant} variant ..."
+    if [ "${variant}" = "standard" ]; then
+        if docker exec "${container}" sh -c '
+            test -d /etc/services.d/aria2b ||
+            test -d /run/service/aria2b ||
+            test -d /run/s6/legacy-services/aria2b ||
+            pgrep -x aria2b >/dev/null
+        '; then
+            echo "aria2b should be absent for standard variant, but it is present" >&2
+            docker exec "${container}" sh -c 'ls -la /etc/services.d /run/service /run/s6/legacy-services 2>/dev/null || true' >&2
+            docker exec "${container}" pgrep -a aria2b >&2 || true
+            return 1
+        fi
+        echo "aria2b absent as expected for standard variant."
+        return 0
+    fi
+
+    aria2b_service_dir="$(wait_for_legacy_service_up aria2b)"
+    echo "aria2b service dir: ${aria2b_service_dir}"
+    docker exec "${container}" s6-svstat "${aria2b_service_dir}" | tee /tmp/docker-aria2b-svstat.out
+    grep -q '^up' /tmp/docker-aria2b-svstat.out
+    docker exec "${container}" pgrep -a aria2b
 }
 
 assert_rpc_and_webui() {
@@ -152,15 +191,20 @@ assert_rpc_and_webui() {
 
 assert_supervision_restart() {
     local service_dir="$1"
+    local old_pid=""
+    local new_pid=""
+
     echo "Checking s6 restarts aria2 legacy service after process death ..."
     old_pid="$(docker exec "${container}" pidof aria2c)"
     test -n "${old_pid}"
+    echo "terminating aria2c old_pid=${old_pid}"
     docker exec "${container}" kill -TERM "${old_pid}"
 
     for i in {1..30}; do
         docker exec "${container}" s6-svwait -u -t 1000 "${service_dir}" >/dev/null 2>/tmp/docker-aria2-restart-svwait.err || true
         new_pid="$(docker exec "${container}" pidof aria2c 2>/dev/null || true)"
         if [ -n "${new_pid}" ] && [ "${new_pid}" != "${old_pid}" ]; then
+            echo "aria2c restarted old_pid=${old_pid} new_pid=${new_pid}"
             wait_for_rpc_ready
             return 0
         fi
@@ -175,6 +219,61 @@ assert_supervision_restart() {
     docker exec "${container}" s6-svstat "${service_dir}" || true
     docker logs "${container}" || true
     return 1
+}
+
+dump_runtime_state() {
+    local title="$1"
+    echo "===== ${title}: docker-aria2 runtime state ====="
+
+    docker exec "${container}" sh -c '
+        set +e
+        echo "-- s6 service directories --"
+        for dir in /run/service /run/s6/legacy-services /etc/services.d; do
+            if [ -d "${dir}" ]; then
+                echo "${dir}"
+                find "${dir}" -maxdepth 2 -mindepth 1 -print | sort
+            fi
+        done
+
+        echo "-- s6 service status --"
+        for svc in aria2 aria2b; do
+            for dir in "/run/service/${svc}" "/run/s6/legacy-services/${svc}"; do
+                if [ -d "${dir}" ]; then
+                    printf "%s: " "${dir}"
+                    s6-svstat "${dir}" || true
+                fi
+            done
+        done
+
+        echo "-- process table --"
+        ps -eo pid,ppid,user,group,args
+
+        echo "-- selected pids --"
+        for name in aria2c aria2b darkhttpd crond; do
+            printf "%s: " "${name}"
+            pgrep -a "${name}" || echo "not running"
+        done
+
+        echo "-- listening tcp sockets from /proc/net/tcp --"
+        awk "NR == 1 || /:1A90|:1F90|:7F04/" /proc/net/tcp
+
+        echo "-- selected container environment --"
+        for key in PUID PGID PORT WEBUI WEBUI_PORT UT RUT A2B; do
+            if [ -f "/run/s6/container_environment/${key}" ]; then
+                printf "%s=" "${key}"
+                cat "/run/s6/container_environment/${key}"
+                echo
+            fi
+        done
+
+        echo "-- selected aria2.conf --"
+        if [ -f /config/aria2.conf ]; then
+            grep -E "^(rpc-listen-port|rpc-secret|dht-listen-port|listen-port|on-download-complete)=" /config/aria2.conf || true
+        else
+            echo "/config/aria2.conf missing"
+        fi
+    '
+    echo "===== end runtime state ====="
 }
 
 assert_default_secret_warning_is_colored() {
@@ -215,8 +314,11 @@ wait_for_container
 aria2_service_dir="$(wait_for_legacy_service_up aria2)"
 assert_container_environment
 assert_process_state "${aria2_service_dir}"
+assert_aria2b_state
+dump_runtime_state "after startup assertions"
 assert_rpc_and_webui
 assert_supervision_restart "${aria2_service_dir}"
+dump_runtime_state "after aria2 restart assertion"
 assert_default_secret_warning_is_colored
 
 echo "docker-aria2 s6 v2-style startup is compatible with the s6 v3 base."

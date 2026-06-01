@@ -27,7 +27,7 @@ env:
   DOWNSTREAM_REPO: SuperNG6/docker-aria2
   DOWNSTREAM_REF: dev-refactor-20260521
   DOWNSTREAM_DIR: downstream/docker-aria2
-  DOWNSTREAM_TEST_IMAGE: local/superng6-aria2:test
+  DOWNSTREAM_TEST_IMAGE: local/superng6-aria2:a2b-test
   DOWNSTREAM_CONTAINER: aria2-downstream-s6-smoke
 
 jobs:
@@ -82,13 +82,13 @@ jobs:
           grep -RIl '^#!/usr/bin/with-contenv bash' root/etc/cont-init.d root/etc/services.d
           git ls-files -s root/etc/cont-init.d root/etc/services.d
 
-      - name: 构建 docker-aria2 standard 镜像
+      - name: 构建 docker-aria2 aria2b 镜像
         working-directory: ${{ env.DOWNSTREAM_DIR }}
         run: |
           set -euo pipefail
           docker build \
-            --build-arg VARIANT=standard \
-            --build-arg A2B_DEFAULT=false \
+            --build-arg VARIANT=a2b \
+            --build-arg A2B_DEFAULT=true \
             -t "${DOWNSTREAM_TEST_IMAGE}" \
             .
 
@@ -108,6 +108,9 @@ jobs:
             -e WEBUI=true \
             -e PORT=6800 \
             -e WEBUI_PORT=8080 \
+            -e A2B=true \
+            -e A2B_DISABLE_LOG=false \
+            -e CRA2B=false \
             -v /tmp/aria2-s6-smoke/config:/config \
             -v /tmp/aria2-s6-smoke/downloads:/downloads \
             "${DOWNSTREAM_TEST_IMAGE}"
@@ -120,11 +123,66 @@ jobs:
             "${DOWNSTREAM_TEST_IMAGE}" \
             "http://127.0.0.1:16800/jsonrpc" \
             "http://127.0.0.1:18080/" \
-            "smoketoken"
+            "smoketoken" \
+            "a2b"
 
-      - name: 输出容器日志
+      - name: 输出容器日志和 s6 诊断
         if: always()
-        run: docker logs "${DOWNSTREAM_CONTAINER}" || true
+        run: |
+          set +e
+          echo "::group::docker container state"
+          docker ps -a --filter "name=${DOWNSTREAM_CONTAINER}"
+          docker inspect "${DOWNSTREAM_CONTAINER}" \
+            --format 'status={{.State.Status}} exit={{.State.ExitCode}} started={{.State.StartedAt}} finished={{.State.FinishedAt}} image={{.Config.Image}}' || true
+          echo "::endgroup::"
+
+          echo "::group::docker logs"
+          docker logs "${DOWNSTREAM_CONTAINER}" || true
+          echo "::endgroup::"
+
+          echo "::group::s6 and process diagnostics"
+          docker exec "${DOWNSTREAM_CONTAINER}" sh -c '
+            set +e
+            echo "-- service directories --"
+            for dir in /etc/services.d /run/service /run/s6/legacy-services; do
+              if [ -d "${dir}" ]; then
+                echo "${dir}"
+                find "${dir}" -maxdepth 2 -mindepth 1 -print | sort
+              fi
+            done
+
+            echo "-- s6 service status --"
+            for svc in aria2 aria2b; do
+              for dir in "/run/service/${svc}" "/run/s6/legacy-services/${svc}"; do
+                if [ -d "${dir}" ]; then
+                  printf "%s: " "${dir}"
+                  s6-svstat "${dir}" || true
+                fi
+              done
+            done
+
+            echo "-- processes --"
+            ps -eo pid,ppid,user,group,args
+
+            echo "-- selected pids --"
+            for name in aria2c aria2b darkhttpd crond; do
+              printf "%s: " "${name}"
+              pgrep -a "${name}" || echo "not running"
+            done
+
+            echo "-- selected env --"
+            for key in PUID PGID PORT WEBUI WEBUI_PORT A2B A2B_DISABLE_LOG CRA2B UT RUT; do
+              if [ -f "/run/s6/container_environment/${key}" ]; then
+                printf "%s=" "${key}"
+                cat "/run/s6/container_environment/${key}"
+                echo
+              fi
+            done
+
+            echo "-- selected aria2.conf --"
+            grep -E "^(rpc-listen-port|rpc-secret|dht-listen-port|listen-port|on-download-complete)=" /config/aria2.conf || true
+          ' || true
+          echo "::endgroup::"
 
       - name: 清理容器
         if: always()
