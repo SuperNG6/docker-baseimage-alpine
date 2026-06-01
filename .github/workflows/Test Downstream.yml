@@ -186,12 +186,48 @@ jobs:
           docker logs aria2-downstream-smoke || true
           exit 1
 
+      - name: 验证 s6 v3 base 启动契约
+        run: |
+          set -euo pipefail
+          service_dir="$(
+            docker exec aria2-downstream-smoke sh -c '
+              for dir in /run/service/aria2 /run/s6/legacy-services/aria2; do
+                if [ -d "${dir}" ]; then
+                  echo "${dir}"
+                  exit 0
+                fi
+              done
+              exit 1
+            '
+          )"
+
+          docker exec aria2-downstream-smoke s6-svstat "${service_dir}" | grep -q '^up'
+
+          proc_uid="$(docker exec aria2-downstream-smoke sh -c 'pid="$(pidof aria2c)"; awk "/^Uid:/ {print \$2}" "/proc/${pid}/status"')"
+          proc_gid="$(docker exec aria2-downstream-smoke sh -c 'pid="$(pidof aria2c)"; awk "/^Gid:/ {print \$2}" "/proc/${pid}/status"')"
+          test "${proc_uid}" = "1001"
+          test "${proc_gid}" = "1001"
+
+          test "$(docker exec aria2-downstream-smoke id -u abc)" = "1001"
+          test "$(docker exec aria2-downstream-smoke id -g abc)" = "1001"
+          test "$(docker exec aria2-downstream-smoke cat /run/s6/container_environment/PUID)" = "1001"
+          test "$(docker exec aria2-downstream-smoke cat /run/s6/container_environment/PGID)" = "1001"
+          test "$(docker exec aria2-downstream-smoke cat /run/s6/container_environment/SECRET)" = "smoketoken"
+          test "$(docker exec aria2-downstream-smoke stat -c '%u:%g' /config)" = "1001:1001"
+          test "$(docker exec aria2-downstream-smoke stat -c '%u:%g' /downloads)" = "1001:1001"
+          docker exec aria2-downstream-smoke sh -c 'pid="$(pidof aria2c)"; tr "\0" "\n" <"/proc/${pid}/environ" | grep -qx "SECRET=smoketoken"'
+
       - name: 运行 docker-aria2 容器内库测试
         working-directory: ${{ env.DOWNSTREAM_DIR }}
         run: |
           set -euo pipefail
           docker cp .github/scripts/in-container-lib-test.sh aria2-downstream-smoke:/tmp/in-container-lib-test.sh
-          docker exec aria2-downstream-smoke bash /tmp/in-container-lib-test.sh
+          docker exec aria2-downstream-smoke bash /tmp/in-container-lib-test.sh 2>&1 | tee /tmp/in-container-lib-test.log
+
+          # stdout/stderr should keep ANSI colors for human docker logs,
+          # while the in-container test asserts persisted *.log files stay plain text.
+          grep -q $'\033\\[' /tmp/in-container-lib-test.log
+          grep -qE 'PASS=[0-9]+  FAIL=0' /tmp/in-container-lib-test.log
 
       - name: 输出容器日志
         if: always()
