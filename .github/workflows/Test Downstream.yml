@@ -1,4 +1,4 @@
-name: 测试下游 Aria2 镜像
+name: 测试 s6 v3 base 兼容性
 
 on:
   workflow_dispatch:
@@ -22,16 +22,14 @@ permissions:
 
 env:
   BASE_TEST_IMAGE: local/superng6-alpine:test
-  DOWNSTREAM_REPO: SuperNG6/docker-aria2
-  DOWNSTREAM_REF: dev-refactor-20260521
-  DOWNSTREAM_DIR: downstream/docker-aria2
-  DOWNSTREAM_TEST_IMAGE: local/superng6-aria2:test
+  S6_FIXTURE_IMAGE: local/superng6-alpine-s6-fixture:test
+  S6_FIXTURE_CONTAINER: s6-base-contract
 
 jobs:
-  aria2-compat:
-    name: 替换 base 并测试 docker-aria2
+  s6-base-contract:
+    name: 验证 s6 v3 base 启动与 v2 风格兼容
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
 
     steps:
       - name: 检出 base 镜像代码
@@ -51,147 +49,149 @@ jobs:
           tags: ${{ env.BASE_TEST_IMAGE }}
           load: true
 
-      - name: 检出 docker-aria2 测试分支
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.DOWNSTREAM_REPO }}
-          ref: ${{ env.DOWNSTREAM_REF }}
-          path: ${{ env.DOWNSTREAM_DIR }}
-
-      - name: 替换 docker-aria2 的 base 镜像
-        working-directory: ${{ env.DOWNSTREAM_DIR }}
+      - name: 构建 s6 v2 风格兼容测试镜像
         run: |
           set -euo pipefail
-          echo "替换前："
-          grep -nE '^FROM ' Dockerfile
+          fixture=/tmp/s6-base-fixture
+          rm -rf "${fixture}"
+          mkdir -p \
+            "${fixture}/root/etc/cont-init.d" \
+            "${fixture}/root/etc/services.d/legacy-worker"
 
-          perl -0pi -e 's{^(FROM\s+)(?:ghcr\.io/)?superng6/alpine(?::[^\s]+)?(\s*(?:AS\s+\S+)?)$}{$1$ENV{BASE_TEST_IMAGE}$2}gmi' Dockerfile
+          cat > "${fixture}/Dockerfile" <<'EOF'
+          FROM local/superng6-alpine:test
+          COPY root/ /
+          RUN chmod +x /etc/cont-init.d/* /etc/services.d/*/run
+          EOF
 
-          echo "替换后："
-          grep -nE '^FROM ' Dockerfile
-          if grep -qE '^(FROM\s+)(?:ghcr\.io/)?superng6/alpine' Dockerfile; then
-            echo "仍存在未替换的 superng6/alpine FROM"
-            exit 1
-          fi
+          cat > "${fixture}/root/etc/cont-init.d/20-contract" <<'EOF'
+          #!/usr/bin/with-contenv bash
+          set -euo pipefail
+          mkdir -p /tmp/s6-contract
 
-          # dev-refactor-20260521 当前这些文件在 git 中是 100644；
-          # s6-overlay v3 会直接执行它们，因此测试前在临时工作区补齐执行位。
-          find root/etc/cont-init.d -type f -exec chmod +x {} +
-          find root/etc/services.d -type f -name run -exec chmod +x {} +
+          {
+            echo "PUID=$(cat /run/s6/container_environment/PUID)"
+            echo "PGID=$(cat /run/s6/container_environment/PGID)"
+            echo "abc=$(id -u abc):$(id -g abc)"
+            echo "secret=$(cat /run/s6/container_environment/SECRET_FROM_FILE)"
+            echo "config_owner=$(stat -c '%u:%g' /config)"
+            echo "defaults_owner=$(stat -c '%u:%g' /defaults)"
+          } > /tmp/s6-contract/cont-init.env
 
-      - name: 构建 docker-aria2 standard 镜像
-        working-directory: ${{ env.DOWNSTREAM_DIR }}
+          test "$(id -u abc)" = "1001"
+          test "$(id -g abc)" = "1001"
+          test "$(cat /run/s6/container_environment/SECRET_FROM_FILE)" = "file-secret-value"
+          test "$(stat -c '%u:%g' /config)" = "1001:1001"
+          test "$(stat -c '%u:%g' /defaults)" = "1001:1001"
+          EOF
+
+          cat > "${fixture}/root/etc/services.d/legacy-worker/run" <<'EOF'
+          #!/usr/bin/with-contenv bash
+          set -euo pipefail
+          mkdir -p /tmp/s6-contract
+
+          count_file=/tmp/s6-contract/start-count
+          count=0
+          [ -f "${count_file}" ] && count="$(cat "${count_file}")"
+          count=$((count + 1))
+          echo "${count}" > "${count_file}"
+
+          {
+            echo "PUID=${PUID}"
+            echo "PGID=${PGID}"
+            echo "SECRET_FROM_FILE=${SECRET_FROM_FILE}"
+            echo "UMASK=${UMASK}"
+            echo "start_count=${count}"
+          } > /tmp/s6-contract/service-env
+
+          touch /tmp/s6-contract/umask-file
+          stat -c '%a' /tmp/s6-contract/umask-file > /tmp/s6-contract/umask-mode
+          printf '\033[1;32mfixture service ready: start=%s\033[0m\n' "${count}"
+
+          trap 'echo TERM >> /tmp/s6-contract/signals; exit 0' TERM
+          while :; do
+            sleep 1
+          done
+          EOF
+
+          docker build -t "${S6_FIXTURE_IMAGE}" "${fixture}"
+
+      - name: 启动 s6 base 契约容器
         run: |
           set -euo pipefail
-          docker build \
-            --build-arg VARIANT=standard \
-            --build-arg A2B_DEFAULT=false \
-            -t "${DOWNSTREAM_TEST_IMAGE}" \
-            .
+          mkdir -p /tmp/s6-base-contract/config /tmp/s6-base-contract/secret
+          printf 'file-secret-value' > /tmp/s6-base-contract/secret/source
 
-      - name: 启动 docker-aria2 容器
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/aria2-smoke/config /tmp/aria2-smoke/downloads
           docker run -d \
-            --name aria2-downstream-smoke \
-            -p 16800:6800 \
-            -p 18080:8080 \
+            --name "${S6_FIXTURE_CONTAINER}" \
             -e PUID=1001 \
             -e PGID=1001 \
-            -e SECRET=smoketoken \
-            -e UT=false \
-            -e RUT=false \
-            -e WEBUI=true \
-            -e PORT=6800 \
-            -e WEBUI_PORT=8080 \
-            -v /tmp/aria2-smoke/config:/config \
-            -v /tmp/aria2-smoke/downloads:/downloads \
-            "${DOWNSTREAM_TEST_IMAGE}"
+            -e UMASK=0027 \
+            -e FILE__SECRET_FROM_FILE=/run/contract-secret/source \
+            -v /tmp/s6-base-contract/config:/config \
+            -v /tmp/s6-base-contract/secret:/run/contract-secret:ro \
+            "${S6_FIXTURE_IMAGE}"
 
-      - name: 检查 docker-aria2 启动与 RPC
+      - name: 验证 s6 v3 启动流程与 v2 风格兼容
         run: |
           set -euo pipefail
-          last_error="s6 has not started the aria2 service yet"
+          service_dir=""
+          last_error="legacy service has not appeared yet"
+
           for i in {1..30}; do
-            if ! docker ps --filter "name=aria2-downstream-smoke" --filter "status=running" --format '{{.Names}}' | grep -qx aria2-downstream-smoke; then
-              last_error="container is not running"
-            else
-              # s6-overlay v3 runs cont-init first, then exposes legacy /etc/services.d entries.
-              # aria2 has no notification-fd, so s6 "up" and JSON-RPC readiness are separate checks.
-              service_dir="$(
-                docker exec aria2-downstream-smoke sh -c '
-                  for dir in /run/service/aria2 /run/s6/legacy-services/aria2; do
-                    if [ -d "${dir}" ]; then
-                      echo "${dir}"
-                      exit 0
-                    fi
-                  done
-                  exit 1
-                ' 2>/tmp/aria2-s6-service.err || true
-              )"
-
-              if [ -z "${service_dir}" ]; then
-                s6_error="$(cat /tmp/aria2-s6-service.err 2>/dev/null || true)"
-                last_error="s6 legacy service directory is not visible yet: ${s6_error:-waiting for legacy-services}"
-                sleep 1
-                continue
-              fi
-
-              if ! docker exec aria2-downstream-smoke s6-svwait -u -t 1000 "${service_dir}" >/dev/null 2>/tmp/aria2-s6-svwait.err; then
-                s6_state="$(docker exec aria2-downstream-smoke s6-svstat "${service_dir}" 2>&1 || true)"
-                s6_error="$(cat /tmp/aria2-s6-svwait.err 2>/dev/null || true)"
-                last_error="s6 aria2 service is not up: ${s6_state:-unknown state} ${s6_error}"
-                sleep 1
-                continue
-              fi
-
-              rm -f /tmp/aria2-rpc-curl.err
-              rpc_response="$(
-                curl -fsS --max-time 2 "http://127.0.0.1:16800/jsonrpc" \
-                  -H 'Content-Type: application/json' \
-                  --data '{"jsonrpc":"2.0","id":"smoke","method":"aria2.getVersion","params":["token:smoketoken"]}' \
-                  2>/tmp/aria2-rpc-curl.err || true
-              )"
-
-              if ! printf '%s' "${rpc_response}" | jq -e '.result.version' >/dev/null 2>/tmp/aria2-rpc-json.err; then
-                rpc_error="$(cat /tmp/aria2-rpc-curl.err 2>/dev/null || true)"
-                json_error="$(cat /tmp/aria2-rpc-json.err 2>/dev/null || true)"
-                last_error="aria2 RPC is not ready after s6 service up: ${rpc_error:-${json_error:-empty response}}"
-              else
-                uid="$(docker exec aria2-downstream-smoke id -u abc)"
-                gid="$(docker exec aria2-downstream-smoke id -g abc)"
-                if [ "${uid}" != "1001" ] || [ "${gid}" != "1001" ]; then
-                  last_error="abc uid/gid mismatch: ${uid}:${gid}"
-                else
-                  rm -f /tmp/aria2-webui-curl.err
-                  if ! curl -fsS "http://127.0.0.1:18080/" >/dev/null 2>/tmp/aria2-webui-curl.err; then
-                    webui_error="$(cat /tmp/aria2-webui-curl.err 2>/dev/null || true)"
-                    last_error="WebUI is not ready: ${webui_error:-empty response}"
-                  else
+            service_dir="$(
+              docker exec "${S6_FIXTURE_CONTAINER}" sh -c '
+                for dir in /run/service/legacy-worker /run/s6/legacy-services/legacy-worker; do
+                  if [ -d "${dir}" ]; then
+                    echo "${dir}"
                     exit 0
                   fi
-                fi
-              fi
+                done
+                exit 1
+              ' 2>/tmp/s6-contract-service.err || true
+            )"
+
+            if [ -n "${service_dir}" ] &&
+              docker exec "${S6_FIXTURE_CONTAINER}" s6-svwait -u -t 1000 "${service_dir}" >/dev/null 2>/tmp/s6-contract-svwait.err &&
+              test "$(docker exec "${S6_FIXTURE_CONTAINER}" cat /tmp/s6-contract/start-count 2>/dev/null)" = "1"; then
+              break
             fi
 
+            s6_state="$(
+              if [ -n "${service_dir}" ]; then
+                docker exec "${S6_FIXTURE_CONTAINER}" s6-svstat "${service_dir}" 2>&1 || true
+              fi
+            )"
+            last_error="${s6_state:-$(cat /tmp/s6-contract-service.err 2>/dev/null || echo waiting)}"
             if [ $((i % 5)) -eq 0 ]; then
-              echo "Waiting for docker-aria2 s6/application readiness (${i}/30): ${last_error}"
-              docker logs --tail 80 aria2-downstream-smoke || true
+              echo "Waiting for s6 fixture legacy service (${i}/30): ${last_error}"
+              docker logs --tail 80 "${S6_FIXTURE_CONTAINER}" || true
             fi
-            sleep 2
+            sleep 1
           done
 
-          echo "docker-aria2 smoke test timed out: ${last_error}"
-          docker logs aria2-downstream-smoke || true
-          exit 1
+          test -n "${service_dir}"
+          docker exec "${S6_FIXTURE_CONTAINER}" s6-svstat "${service_dir}" | grep -q '^up'
 
-      - name: 验证 s6 v3 base 启动契约
+          docker exec "${S6_FIXTURE_CONTAINER}" grep -qx 'PUID=1001' /tmp/s6-contract/cont-init.env
+          docker exec "${S6_FIXTURE_CONTAINER}" grep -qx 'PGID=1001' /tmp/s6-contract/cont-init.env
+          docker exec "${S6_FIXTURE_CONTAINER}" grep -qx 'abc=1001:1001' /tmp/s6-contract/cont-init.env
+          docker exec "${S6_FIXTURE_CONTAINER}" grep -qx 'secret=file-secret-value' /tmp/s6-contract/cont-init.env
+          docker exec "${S6_FIXTURE_CONTAINER}" grep -qx 'config_owner=1001:1001' /tmp/s6-contract/cont-init.env
+          docker exec "${S6_FIXTURE_CONTAINER}" grep -qx 'defaults_owner=1001:1001' /tmp/s6-contract/cont-init.env
+
+          docker exec "${S6_FIXTURE_CONTAINER}" grep -qx 'PUID=1001' /tmp/s6-contract/service-env
+          docker exec "${S6_FIXTURE_CONTAINER}" grep -qx 'PGID=1001' /tmp/s6-contract/service-env
+          docker exec "${S6_FIXTURE_CONTAINER}" grep -qx 'SECRET_FROM_FILE=file-secret-value' /tmp/s6-contract/service-env
+          docker exec "${S6_FIXTURE_CONTAINER}" grep -qx 'UMASK=0027' /tmp/s6-contract/service-env
+          test "$(docker exec "${S6_FIXTURE_CONTAINER}" cat /tmp/s6-contract/umask-mode)" = "640"
+
+      - name: 验证 s6 supervision 会重启 legacy service
         run: |
           set -euo pipefail
           service_dir="$(
-            docker exec aria2-downstream-smoke sh -c '
-              for dir in /run/service/aria2 /run/s6/legacy-services/aria2; do
+            docker exec "${S6_FIXTURE_CONTAINER}" sh -c '
+              for dir in /run/service/legacy-worker /run/s6/legacy-services/legacy-worker; do
                 if [ -d "${dir}" ]; then
                   echo "${dir}"
                   exit 0
@@ -200,45 +200,40 @@ jobs:
               exit 1
             '
           )"
+          old_pid="$(docker exec "${S6_FIXTURE_CONTAINER}" s6-svstat "${service_dir}" | sed -n 's/^up (pid \([0-9][0-9]*\).*/\1/p')"
+          test -n "${old_pid}"
+          docker exec "${S6_FIXTURE_CONTAINER}" kill -TERM "${old_pid}"
 
-          docker exec aria2-downstream-smoke s6-svstat "${service_dir}" | grep -q '^up'
+          for _ in {1..20}; do
+            new_pid="$(docker exec "${S6_FIXTURE_CONTAINER}" s6-svstat "${service_dir}" | sed -n 's/^up (pid \([0-9][0-9]*\).*/\1/p')"
+            start_count="$(docker exec "${S6_FIXTURE_CONTAINER}" cat /tmp/s6-contract/start-count 2>/dev/null || true)"
+            if [ -n "${new_pid}" ] && [ "${new_pid}" != "${old_pid}" ] && [ "${start_count}" = "2" ]; then
+              exit 0
+            fi
+            sleep 1
+          done
 
-          proc_uid="$(docker exec aria2-downstream-smoke sh -c 'pid="$(pidof aria2c)"; awk "/^Uid:/ {print \$2}" "/proc/${pid}/status"')"
-          proc_gid="$(docker exec aria2-downstream-smoke sh -c 'pid="$(pidof aria2c)"; awk "/^Gid:/ {print \$2}" "/proc/${pid}/status"')"
-          test "${proc_uid}" = "1001"
-          test "${proc_gid}" = "1001"
+          docker exec "${S6_FIXTURE_CONTAINER}" s6-svstat "${service_dir}" || true
+          docker logs "${S6_FIXTURE_CONTAINER}" || true
+          exit 1
 
-          test "$(docker exec aria2-downstream-smoke id -u abc)" = "1001"
-          test "$(docker exec aria2-downstream-smoke id -g abc)" = "1001"
-          test "$(docker exec aria2-downstream-smoke cat /run/s6/container_environment/PUID)" = "1001"
-          test "$(docker exec aria2-downstream-smoke cat /run/s6/container_environment/PGID)" = "1001"
-          test "$(docker exec aria2-downstream-smoke cat /run/s6/container_environment/SECRET)" = "smoketoken"
-          test "$(docker exec aria2-downstream-smoke stat -c '%u:%g' /config)" = "1001:1001"
-          test "$(docker exec aria2-downstream-smoke stat -c '%u:%g' /downloads)" = "1001:1001"
-
-          wrong_token_response="$(
-            curl -sS --max-time 2 "http://127.0.0.1:16800/jsonrpc" \
-              -H 'Content-Type: application/json' \
-              --data '{"jsonrpc":"2.0","id":"wrong-token","method":"aria2.getVersion","params":["token:not-smoketoken"]}'
-          )"
-          printf '%s' "${wrong_token_response}" | jq -e '.error' >/dev/null
-
-      - name: 运行 docker-aria2 容器内库测试
-        working-directory: ${{ env.DOWNSTREAM_DIR }}
+      - name: 验证 docker logs 保留彩色输出
         run: |
           set -euo pipefail
-          docker cp .github/scripts/in-container-lib-test.sh aria2-downstream-smoke:/tmp/in-container-lib-test.sh
-          docker exec aria2-downstream-smoke bash /tmp/in-container-lib-test.sh 2>&1 | tee /tmp/in-container-lib-test.log
+          docker logs "${S6_FIXTURE_CONTAINER}" 2>&1 | tee /tmp/s6-base-contract.log
+          grep -q $'\033\\[1;32mfixture service ready' /tmp/s6-base-contract.log
 
-          # stdout/stderr should keep ANSI colors for human docker logs,
-          # while the in-container test asserts persisted *.log files stay plain text.
-          grep -q $'\033\\[' /tmp/in-container-lib-test.log
-          grep -qE 'PASS=[0-9]+  FAIL=0' /tmp/in-container-lib-test.log
+      - name: 验证容器停止信号进入 service
+        run: |
+          set -euo pipefail
+          docker stop --time 10 "${S6_FIXTURE_CONTAINER}"
+          docker cp "${S6_FIXTURE_CONTAINER}:/tmp/s6-contract/signals" /tmp/s6-contract-signals
+          grep -qx 'TERM' /tmp/s6-contract-signals
 
       - name: 输出容器日志
         if: always()
-        run: docker logs aria2-downstream-smoke || true
+        run: docker logs "${S6_FIXTURE_CONTAINER}" || true
 
       - name: 清理容器
         if: always()
-        run: docker rm -f aria2-downstream-smoke || true
+        run: docker rm -f "${S6_FIXTURE_CONTAINER}" || true
