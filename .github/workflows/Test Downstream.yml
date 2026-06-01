@@ -217,7 +217,7 @@ jobs:
           test "$(docker exec aria2-downstream-smoke stat -c '%u:%g' /downloads)" = "1001:1001"
 
           wrong_token_response="$(
-            curl -fsS --max-time 2 "http://127.0.0.1:16800/jsonrpc" \
+            curl -sS --max-time 2 "http://127.0.0.1:16800/jsonrpc" \
               -H 'Content-Type: application/json' \
               --data '{"jsonrpc":"2.0","id":"wrong-token","method":"aria2.getVersion","params":["token:not-smoketoken"]}'
           )"
