@@ -1,5 +1,16 @@
 #!/usr/bin/with-contenv bash
 
+# s6-overlay v3 executes legacy v2 init and service scripts directly. Some
+# downstream v2 images keep these files as 0644 in git, so normalize the
+# runtime copy before s6 imports /etc/cont-init.d and /etc/services.d.
+if [ -d /etc/cont-init.d ]; then
+  find /etc/cont-init.d -type f -exec chmod a+x {} +
+fi
+
+if [ -d /etc/services.d ]; then
+  find /etc/services.d -type f \( -name run -o -name finish \) -exec chmod a+x {} +
+fi
+
 # Exit if mods is not set
 if [ -z ${DOCKER_MODS+x} ]; then
   exit 0
@@ -30,7 +41,7 @@ get_blob_sha () {
       --location \
       --request GET \
       --header "Authorization: Bearer $2" \
-      $3 |\
+      "$3" |\
       grep -A4 'layers' |\
       grep -m1 'digest' |\
       awk -F'"' '{print $4}'
@@ -40,7 +51,7 @@ get_blob_sha () {
       --location \
       --request GET \
       --header "Authorization: Bearer $2" \
-      $3 |\
+      "$3" |\
       grep -m1 "blobSum" |\
       awk -F'"' '{print $4}'
   fi
@@ -49,7 +60,7 @@ get_blob_sha () {
 # Main run logic
 echo "[mod-init] Attempting to run Docker Modification Logic"
 IFS='|'
-DOCKER_MODS=(${DOCKER_MODS})
+read -r -a DOCKER_MODS <<< "${DOCKER_MODS}"
 for DOCKER_MOD in "${DOCKER_MODS[@]}"; do
   # Support alternative endpoints
   if [[ ${DOCKER_MOD} == ghcr.io/* ]] || [[ ${DOCKER_MOD} == linuxserver/* ]]; then
@@ -82,8 +93,7 @@ for DOCKER_MOD in "${DOCKER_MODS[@]}"; do
   fi
   # Kill off modification logic if any of the usernames are banned
   BLACKLIST=$(curl -s https://raw.githubusercontent.com/linuxserver/docker-mods/master/blacklist.txt)
-  IFS=$'\n'
-  BLACKLIST=(${BLACKLIST})
+  mapfile -t BLACKLIST <<< "${BLACKLIST}"
   for BANNED in "${BLACKLIST[@]}"; do
     if [ "${BANNED}" == "${USERNAME,,}" ]; then
       if [ -z ${RUN_BANNED_MODS+x} ]; then
@@ -106,7 +116,7 @@ for DOCKER_MOD in "${DOCKER_MODS[@]}"; do
   # Determine first and only layer of image
   SHALAYER=$(get_blob_sha "${MODE}" "${TOKEN}" "${MANIFEST_URL}")
   # Check if we have allready applied this layer
-  if [ -f "/${FILENAME}" ] && [ "${SHALAYER}" == "$(cat /${FILENAME})" ]; then
+  if [ -f "/${FILENAME}" ] && [ "${SHALAYER}" == "$(cat "/${FILENAME}")" ]; then
     echo "[mod-init] ${DOCKER_MOD} at ${SHALAYER} has been previously applied skipping"
   else
     # Download and extract layer to /
@@ -117,6 +127,6 @@ for DOCKER_MOD in "${DOCKER_MODS[@]}"; do
       --header "Authorization: Bearer ${TOKEN}" \
       "${BLOB_URL}${SHALAYER}" \
       | tar xz -C /
-    echo ${SHALAYER} > "/${FILENAME}"
+    echo "${SHALAYER}" > "/${FILENAME}"
   fi
 done

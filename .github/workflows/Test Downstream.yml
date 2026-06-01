@@ -80,10 +80,7 @@ jobs:
           test -d root/etc/cont-init.d
           test -d root/etc/services.d
           grep -RIl '^#!/usr/bin/with-contenv bash' root/etc/cont-init.d root/etc/services.d
-
-          # docker-aria2 是 s6 v2 风格目录；s6-overlay v3 会直接执行这些脚本。
-          find root/etc/cont-init.d -type f -exec chmod +x {} +
-          find root/etc/services.d -type f -name run -exec chmod +x {} +
+          git ls-files -s root/etc/cont-init.d root/etc/services.d
 
       - name: 构建 docker-aria2 standard 镜像
         working-directory: ${{ env.DOWNSTREAM_DIR }}
