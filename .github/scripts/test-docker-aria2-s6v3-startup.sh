@@ -163,11 +163,11 @@ assert_aria2b_state() {
             test -d /etc/services.d/aria2b ||
             test -d /run/service/aria2b ||
             test -d /run/s6/legacy-services/aria2b ||
-            pgrep -x aria2b >/dev/null
+            ps -eo args | grep -q "[u]sr/local/bin/aria2b"
         '; then
             echo "aria2b should be absent for standard variant, but it is present" >&2
             docker exec "${container}" sh -c 'ls -la /etc/services.d /run/service /run/s6/legacy-services 2>/dev/null || true' >&2
-            docker exec "${container}" pgrep -a aria2b >&2 || true
+            docker exec "${container}" sh -c 'ps -eo pid,ppid,user,group,args | grep "[u]sr/local/bin/aria2b"' >&2 || true
             return 1
         fi
         echo "aria2b absent as expected for standard variant."
@@ -178,7 +178,8 @@ assert_aria2b_state() {
     echo "aria2b service dir: ${aria2b_service_dir}"
     docker exec "${container}" s6-svstat "${aria2b_service_dir}" | tee /tmp/docker-aria2b-svstat.out
     grep -q '^up' /tmp/docker-aria2b-svstat.out
-    docker exec "${container}" pgrep -a aria2b
+    docker exec "${container}" sh -c \
+        "ps -eo pid,ppid,user,group,args | awk '/[u]sr\\/local\\/bin\\/aria2b/ { print; found=1 } END { exit !found }'"
 }
 
 assert_rpc_and_webui() {
@@ -251,7 +252,11 @@ dump_runtime_state() {
         echo "-- selected pids --"
         for name in aria2c aria2b darkhttpd crond; do
             printf "%s: " "${name}"
-            pgrep -a "${name}" || echo "not running"
+            if [ "${name}" = "aria2b" ]; then
+                ps -eo pid,ppid,user,group,args | awk "/[u]sr\\/local\\/bin\\/aria2b/ { print; found=1 } END { exit !found }" || echo "not running"
+            else
+                pgrep -a "${name}" || echo "not running"
+            fi
         done
 
         echo "-- listening tcp sockets from /proc/net/tcp --"

@@ -167,7 +167,11 @@ jobs:
             echo "-- selected pids --"
             for name in aria2c aria2b darkhttpd crond; do
               printf "%s: " "${name}"
-              pgrep -a "${name}" || echo "not running"
+              if [ "${name}" = "aria2b" ]; then
+                ps -eo pid,ppid,user,group,args | awk "/[u]sr\\/local\\/bin\\/aria2b/ { print; found=1 } END { exit !found }" || echo "not running"
+              else
+                pgrep -a "${name}" || echo "not running"
+              fi
             done
 
             echo "-- selected env --"
