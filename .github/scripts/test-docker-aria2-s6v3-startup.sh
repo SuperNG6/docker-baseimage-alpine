@@ -180,6 +180,13 @@ assert_aria2b_state() {
     grep -q '^up' /tmp/docker-aria2b-svstat.out
     docker exec "${container}" sh -c \
         "ps -eo pid,ppid,user,group,args | awk '/[u]sr\\/local\\/bin\\/aria2b/ { print; found=1 } END { exit !found }'"
+
+    if docker logs "${container}" 2>&1 |
+        grep -Eq 'aria2b 启动环境不可用|ipset 不可用|Operation not permitted'; then
+        echo "aria2b is running, but it reported an unusable runtime environment" >&2
+        docker logs "${container}" >&2 || true
+        return 1
+    fi
 }
 
 assert_rpc_and_webui() {
@@ -290,6 +297,7 @@ assert_default_secret_warning_is_colored() {
         -e UT=false \
         -e RUT=false \
         -e WEBUI=false \
+        -e A2B=false \
         -e PORT=6800 \
         -e WEBUI_PORT=8080 \
         "${image}" >/dev/null

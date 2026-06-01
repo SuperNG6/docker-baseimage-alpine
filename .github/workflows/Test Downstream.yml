@@ -98,6 +98,7 @@ jobs:
           mkdir -p /tmp/aria2-s6-smoke/config /tmp/aria2-s6-smoke/downloads
           docker run -d \
             --name "${DOWNSTREAM_CONTAINER}" \
+            --cap-add NET_ADMIN \
             -p 16800:6800 \
             -p 18080:8080 \
             -e PUID=1001 \
