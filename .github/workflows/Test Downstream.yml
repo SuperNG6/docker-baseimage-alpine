@@ -112,24 +112,47 @@ jobs:
       - name: 检查 docker-aria2 启动与 RPC
         run: |
           set -euo pipefail
+          last_error="container is not running yet"
           for i in {1..30}; do
-            if docker ps --filter "name=aria2-downstream-smoke" --filter "status=running" --format '{{.Names}}' | grep -qx aria2-downstream-smoke \
-              && curl -fsS "http://127.0.0.1:16800/jsonrpc" \
-                -H 'Content-Type: application/json' \
-                --data '{"jsonrpc":"2.0","id":"smoke","method":"aria2.getVersion","params":["token:smoketoken"]}' \
-                | grep -q '"result"'; then
-              uid="$(docker exec aria2-downstream-smoke id -u abc)"
-              gid="$(docker exec aria2-downstream-smoke id -g abc)"
-              test "${uid}" = "1001"
-              test "${gid}" = "1001"
-              curl -fsS "http://127.0.0.1:18080/" >/dev/null
-              exit 0
+            if ! docker ps --filter "name=aria2-downstream-smoke" --filter "status=running" --format '{{.Names}}' | grep -qx aria2-downstream-smoke; then
+              last_error="container is not running"
+            else
+              rm -f /tmp/aria2-rpc-curl.err
+              rpc_response="$(
+                curl -fsS "http://127.0.0.1:16800/jsonrpc" \
+                  -H 'Content-Type: application/json' \
+                  --data '{"jsonrpc":"2.0","id":"smoke","method":"aria2.getVersion","params":["token:smoketoken"]}' \
+                  2>/tmp/aria2-rpc-curl.err || true
+              )"
+
+              if ! printf '%s' "${rpc_response}" | grep -q '"result"'; then
+                rpc_error="$(cat /tmp/aria2-rpc-curl.err 2>/dev/null || true)"
+                last_error="aria2 RPC is not ready: ${rpc_error:-empty response}"
+              else
+                uid="$(docker exec aria2-downstream-smoke id -u abc)"
+                gid="$(docker exec aria2-downstream-smoke id -g abc)"
+                if [ "${uid}" != "1001" ] || [ "${gid}" != "1001" ]; then
+                  last_error="abc uid/gid mismatch: ${uid}:${gid}"
+                else
+                  rm -f /tmp/aria2-webui-curl.err
+                  if ! curl -fsS "http://127.0.0.1:18080/" >/dev/null 2>/tmp/aria2-webui-curl.err; then
+                    webui_error="$(cat /tmp/aria2-webui-curl.err 2>/dev/null || true)"
+                    last_error="WebUI is not ready: ${webui_error:-empty response}"
+                  else
+                    exit 0
+                  fi
+                fi
+              fi
             fi
-            docker logs --tail 80 aria2-downstream-smoke || true
+
+            if [ $((i % 5)) -eq 0 ]; then
+              echo "Waiting for docker-aria2 smoke readiness (${i}/30): ${last_error}"
+              docker logs --tail 80 aria2-downstream-smoke || true
+            fi
             sleep 2
           done
 
-          echo "docker-aria2 smoke test timed out"
+          echo "docker-aria2 smoke test timed out: ${last_error}"
           docker logs aria2-downstream-smoke || true
           exit 1
 
