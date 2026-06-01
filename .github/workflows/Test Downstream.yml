@@ -112,22 +112,52 @@ jobs:
       - name: 检查 docker-aria2 启动与 RPC
         run: |
           set -euo pipefail
-          last_error="container is not running yet"
+          last_error="s6 has not started the aria2 service yet"
           for i in {1..30}; do
             if ! docker ps --filter "name=aria2-downstream-smoke" --filter "status=running" --format '{{.Names}}' | grep -qx aria2-downstream-smoke; then
               last_error="container is not running"
             else
+              # s6-overlay v3 runs cont-init first, then exposes legacy /etc/services.d entries.
+              # aria2 has no notification-fd, so s6 "up" and JSON-RPC readiness are separate checks.
+              service_dir="$(
+                docker exec aria2-downstream-smoke sh -c '
+                  for dir in /run/service/aria2 /run/s6/legacy-services/aria2; do
+                    if [ -d "${dir}" ]; then
+                      echo "${dir}"
+                      exit 0
+                    fi
+                  done
+                  exit 1
+                ' 2>/tmp/aria2-s6-service.err || true
+              )"
+
+              if [ -z "${service_dir}" ]; then
+                s6_error="$(cat /tmp/aria2-s6-service.err 2>/dev/null || true)"
+                last_error="s6 legacy service directory is not visible yet: ${s6_error:-waiting for legacy-services}"
+                sleep 1
+                continue
+              fi
+
+              if ! docker exec aria2-downstream-smoke s6-svwait -u -t 1000 "${service_dir}" >/dev/null 2>/tmp/aria2-s6-svwait.err; then
+                s6_state="$(docker exec aria2-downstream-smoke s6-svstat "${service_dir}" 2>&1 || true)"
+                s6_error="$(cat /tmp/aria2-s6-svwait.err 2>/dev/null || true)"
+                last_error="s6 aria2 service is not up: ${s6_state:-unknown state} ${s6_error}"
+                sleep 1
+                continue
+              fi
+
               rm -f /tmp/aria2-rpc-curl.err
               rpc_response="$(
-                curl -fsS "http://127.0.0.1:16800/jsonrpc" \
+                curl -fsS --max-time 2 "http://127.0.0.1:16800/jsonrpc" \
                   -H 'Content-Type: application/json' \
                   --data '{"jsonrpc":"2.0","id":"smoke","method":"aria2.getVersion","params":["token:smoketoken"]}' \
                   2>/tmp/aria2-rpc-curl.err || true
               )"
 
-              if ! printf '%s' "${rpc_response}" | grep -q '"result"'; then
+              if ! printf '%s' "${rpc_response}" | jq -e '.result.version' >/dev/null 2>/tmp/aria2-rpc-json.err; then
                 rpc_error="$(cat /tmp/aria2-rpc-curl.err 2>/dev/null || true)"
-                last_error="aria2 RPC is not ready: ${rpc_error:-empty response}"
+                json_error="$(cat /tmp/aria2-rpc-json.err 2>/dev/null || true)"
+                last_error="aria2 RPC is not ready after s6 service up: ${rpc_error:-${json_error:-empty response}}"
               else
                 uid="$(docker exec aria2-downstream-smoke id -u abc)"
                 gid="$(docker exec aria2-downstream-smoke id -g abc)"
@@ -146,7 +176,7 @@ jobs:
             fi
 
             if [ $((i % 5)) -eq 0 ]; then
-              echo "Waiting for docker-aria2 smoke readiness (${i}/30): ${last_error}"
+              echo "Waiting for docker-aria2 s6/application readiness (${i}/30): ${last_error}"
               docker logs --tail 80 aria2-downstream-smoke || true
             fi
             sleep 2
