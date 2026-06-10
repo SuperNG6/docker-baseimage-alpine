@@ -16,6 +16,9 @@ Alpine v3.23.3
 ### 2026-04-16 更新
 Alpine v3.23.4
 
+### 2026-06-10 更新
+Alpine v3.24.0
+
 [linuxserverurl]: https://linuxserver.io
 [forumurl]: https://forum.linuxserver.io
 [ircurl]: https://www.linuxserver.io/irc/
