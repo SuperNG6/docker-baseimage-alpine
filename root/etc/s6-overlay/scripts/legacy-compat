@@ -1,0 +1,29 @@
+#!/bin/sh
+
+# s6-overlay v2 compatibility for downstream images.
+#
+# Runs as S6_STAGE2_HOOK, i.e. before fix-attrs.d, /etc/cont-init.d and
+# /etc/services.d are processed by s6-overlay v3.
+
+# s6-overlay v2 copied the legacy script directories and made the copies
+# executable. v3 executes the files in place, and some downstream images keep
+# them as 0644 in git, so add the missing execute bits here. Files that are
+# already executable are left untouched.
+for dir in /etc/cont-init.d /etc/cont-finish.d; do
+  if [ -d "${dir}" ]; then
+    find "${dir}" -type f ! -perm -111 -exec chmod a+x {} +
+  fi
+done
+
+if [ -d /etc/services.d ]; then
+  find /etc/services.d -type f \( -name run -o -name finish \) ! -perm -111 -exec chmod a+x {} +
+fi
+
+# v2 exposed supervised services as /var/run/s6/services/<name>; v3 moved them
+# to /run/service/<name>. Keep the old path working for downstream scripts
+# such as `s6-svc -r /var/run/s6/services/<name>`.
+if [ -d /run/s6 ] && [ ! -e /run/s6/services ] && [ ! -L /run/s6/services ]; then
+  ln -s /run/service /run/s6/services
+fi
+
+exit 0

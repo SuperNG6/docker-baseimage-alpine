@@ -10,6 +10,10 @@ env:
   DOCKER_IMAGE: superng6/alpine
   # GitHub Container Registry (ghcr.io) 镜像名称
   GHCR_IMAGE: ghcr.io/superng6/alpine
+  # s6-overlay v3 分支的镜像标签后缀：发布为 3.24.4-s6v3 / 3.24-s6v3 / latest-s6v3，
+  # 不覆盖 main 分支（s6-overlay v2）发布的 3.24.4 / 3.24 / latest。
+  # 当 v3 取代 v2 成为默认版本时，将此值改为空字符串即可。
+  TAG_SUFFIX: "-s6v3"
 
 jobs:
   check_version:
@@ -24,7 +28,7 @@ jobs:
 
       - name: 检查版本并决定是否构建
         id: version-check
-        run: bash .github/workflows/version-check.sh ${{ env.DOCKER_IMAGE }}
+        run: bash .github/workflows/version-check.sh "${{ env.DOCKER_IMAGE }}" "${{ env.TAG_SUFFIX }}"
 
   build:
     runs-on: ubuntu-latest
@@ -136,18 +140,18 @@ jobs:
           ls -1 .
           # 使用检查到的新版本号
           docker buildx imagetools create \
-            -t "${{ env.DOCKER_IMAGE }}:${{ needs.check_version.outputs.full_version }}" \
-            -t "${{ env.DOCKER_IMAGE }}:${{ needs.check_version.outputs.minor_version }}" \
-            -t "${{ env.DOCKER_IMAGE }}:latest" \
-            -t "${{ env.GHCR_IMAGE }}:${{ needs.check_version.outputs.full_version }}" \
-            -t "${{ env.GHCR_IMAGE }}:${{ needs.check_version.outputs.minor_version }}" \
-            -t "${{ env.GHCR_IMAGE }}:latest" \
+            -t "${{ env.DOCKER_IMAGE }}:${{ needs.check_version.outputs.full_version }}${{ env.TAG_SUFFIX }}" \
+            -t "${{ env.DOCKER_IMAGE }}:${{ needs.check_version.outputs.minor_version }}${{ env.TAG_SUFFIX }}" \
+            -t "${{ env.DOCKER_IMAGE }}:latest${{ env.TAG_SUFFIX }}" \
+            -t "${{ env.GHCR_IMAGE }}:${{ needs.check_version.outputs.full_version }}${{ env.TAG_SUFFIX }}" \
+            -t "${{ env.GHCR_IMAGE }}:${{ needs.check_version.outputs.minor_version }}${{ env.TAG_SUFFIX }}" \
+            -t "${{ env.GHCR_IMAGE }}:latest${{ env.TAG_SUFFIX }}" \
             $(printf '${{ env.DOCKER_IMAGE }}@sha256:%s ' *)
 
       - name: 检查镜像
         run: |
-          docker buildx imagetools inspect ${{ env.DOCKER_IMAGE }}:${{ needs.check_version.outputs.full_version }}
-          docker buildx imagetools inspect ${{ env.GHCR_IMAGE }}:${{ needs.check_version.outputs.full_version }}
+          docker buildx imagetools inspect "${{ env.DOCKER_IMAGE }}:${{ needs.check_version.outputs.full_version }}${{ env.TAG_SUFFIX }}"
+          docker buildx imagetools inspect "${{ env.GHCR_IMAGE }}:${{ needs.check_version.outputs.full_version }}${{ env.TAG_SUFFIX }}"
 
   # =========================================================
   # 更新 README.md

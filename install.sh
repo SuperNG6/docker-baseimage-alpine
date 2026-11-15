@@ -3,7 +3,7 @@
 # Exit immediately if a command exits with a non-zero status.
 set -euo pipefail
 
-S6_VER="${S6_OVERLAY_VERSION:-3.2.3.0}"
+S6_VER="${S6_OVERLAY_VERSION:-3.2.3.2}"
 TARGETARCH="${TARGETARCH:-}"
 TARGETVARIANT="${TARGETVARIANT:-}"
 

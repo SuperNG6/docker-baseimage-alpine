@@ -1,7 +1,7 @@
 ARG VERSION=latest
 ARG TARGETARCH
 ARG TARGETVARIANT
-ARG S6_OVERLAY_VERSION=3.2.3.0
+ARG S6_OVERLAY_VERSION=3.2.3.2
 
 # Dockerfile for s6-overlay v3 on the official Alpine image
 FROM alpine:${VERSION} AS rootfs-stage
@@ -41,7 +41,8 @@ ENV PS1="$(whoami)@$(hostname):$(pwd)\\$ " \
 	HOME="/root" \
 	TERM="xterm" \
 	S6_CMD_WAIT_FOR_SERVICES_MAXTIME="0" \
-	S6_STAGE2_HOOK="/docker-mods" \
+	S6_CMD_ARG0="/command/with-contenv" \
+	S6_STAGE2_HOOK="/etc/s6-overlay/scripts/legacy-compat" \
 	S6_VERBOSITY=1
 
 RUN \

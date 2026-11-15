@@ -5,11 +5,13 @@
 
 # 检查参数
 if [ -z "$1" ]; then
-    echo "::error::错误：未提供 Docker 镜像名称。用法：$0 <镜像名称>"
+    echo "::error::错误：未提供 Docker 镜像名称。用法：$0 <镜像名称> [标签后缀]"
     exit 1
 fi
 
 DOCKER_IMAGE="$1"
+# 可选的标签后缀（例如 -s6v3）：只与带该后缀的已发布标签比较
+TAG_SUFFIX="${2:-}"
 
 echo "正在检查官方 Alpine 版本..." >&2
 
@@ -35,10 +37,10 @@ echo "官方 Alpine 最新版本: $OFFICIAL_VERSION" >&2
 OUR_API_URL="https://hub.docker.com/v2/repositories/${DOCKER_IMAGE}/tags/?page_size=100&ordering=last_updated"
 OUR_RESPONSE=$(curl -fsSL --retry 3 --retry-delay 2 "$OUR_API_URL" || echo '{"results":[]}')
 
-# 提取我们镜像中符合 x.y.z 格式的最新版本
-OUR_VERSION=$(echo "$OUR_RESPONSE" | jq -r '.results[].name' | grep -E '^[0-9]+(\.[0-9]+){1,2}$' | sort -Vr | head -n 1 || echo "0.0.0")
+# 提取我们镜像中符合 x.y.z<后缀> 格式的最新版本（去掉后缀后比较）
+OUR_VERSION=$(echo "$OUR_RESPONSE" | jq -r --arg s "$TAG_SUFFIX" '.results[].name | select(endswith($s)) | .[:(length - ($s | length))]' | grep -E '^[0-9]+(\.[0-9]+){1,2}$' | sort -Vr | head -n 1 || echo "0.0.0")
 
-echo "我们的镜像最新版本: $OUR_VERSION" >&2
+echo "我们的镜像最新版本${TAG_SUFFIX:+（标签后缀 ${TAG_SUFFIX}）}: ${OUR_VERSION:-无}" >&2
 
 # 版本比较函数
 version_compare() {

@@ -7,6 +7,7 @@ on:
       - "Dockerfile"
       - "install.sh"
       - "root/**"
+      - ".github/scripts/test-base-contract.sh"
       - ".github/scripts/test-docker-aria2-s6v3-startup.sh"
       - ".github/workflows/Test Downstream.yml"
   push:
@@ -16,6 +17,7 @@ on:
       - "Dockerfile"
       - "install.sh"
       - "root/**"
+      - ".github/scripts/test-base-contract.sh"
       - ".github/scripts/test-docker-aria2-s6v3-startup.sh"
       - ".github/workflows/Test Downstream.yml"
 
@@ -25,7 +27,7 @@ permissions:
 env:
   BASE_TEST_IMAGE: local/superng6-alpine:test
   DOWNSTREAM_REPO: SuperNG6/docker-aria2
-  DOWNSTREAM_REF: dev-refactor-20260521
+  DOWNSTREAM_REF: master
   DOWNSTREAM_DIR: downstream/docker-aria2
   DOWNSTREAM_TEST_IMAGE: local/superng6-aria2:a2b-test
   DOWNSTREAM_CONTAINER: aria2-downstream-s6-smoke
@@ -49,10 +51,11 @@ jobs:
           context: .
           file: ./Dockerfile
           platforms: linux/amd64
-          build-args: |
-            VERSION=3.23.4
           tags: ${{ env.BASE_TEST_IMAGE }}
           load: true
+
+      - name: 验证 base 镜像契约（v2 风格夹具）
+        run: bash .github/scripts/test-base-contract.sh "${BASE_TEST_IMAGE}"
 
       - name: 检出 docker-aria2 s6 v2 风格下游
         uses: actions/checkout@v4
