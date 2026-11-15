@@ -168,6 +168,10 @@ check "services drop privileges with s6-setuidgid" "2" \
     "$(docker exec "${container}" sh -c 'ps -eo user,args | grep -c "^abc  *sleep [12]00000"')"
 check "s6 tools are on PATH for docker exec" "/usr/bin/s6-svc" \
     "$(docker exec "${container}" sh -c 'command -v s6-svc')"
+check "v2 absolute path /bin/execlineb works" "execline-ok" \
+    "$(docker exec "${container}" /bin/execlineb -Pc 's6-echo execline-ok' 2>&1)"
+check_contains "v2 absolute path /bin/s6-svstat works" "up (pid" \
+    "$(docker exec "${container}" /bin/s6-svstat /var/run/s6/services/svc 2>&1)"
 check "docker exec with-contenv sees container env" "bar|s3cr3t value" \
     "$(docker exec "${container}" with-contenv sh -c 'echo "${FOO}|${SECRET}"')"
 

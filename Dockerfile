@@ -64,6 +64,10 @@ RUN \
 	/app \
 	/config \
 	/defaults && \
+ echo "**** link s6 tools into /bin for s6-overlay v2 style absolute paths ****" && \
+ for tool in /command/*; do \
+	[ -e "/bin/${tool##*/}" ] || [ -L "/bin/${tool##*/}" ] || ln -s "${tool}" "/bin/${tool##*/}"; \
+ done && \
  echo "**** cleanup ****" && \
  rm -rf \
 	/tmp/*

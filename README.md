@@ -5,7 +5,7 @@
 <!-- Please read the CONTRIBUTING.md -->
 
 ### 2026-11-15 更新
-s6-overlay v3.2.3.2；移除 Docker Mods（`DOCKER_MODS`）支持；补全 s6-overlay v2 风格下游镜像的兼容处理（详见下文“从 s6-overlay v2 迁移”）；镜像标签增加 `-s6v3` 后缀，与 `main` 分支的 s6-overlay v2 镜像并存。
+s6-overlay v3.2.3.2；移除 Docker Mods（`DOCKER_MODS`）支持；s6 工具链接到 `/bin`；补全 s6-overlay v2 风格下游镜像的兼容处理（详见下文“从 s6-overlay v2 迁移”）；镜像标签增加 `-s6v3` 后缀，与 `main` 分支的 s6-overlay v2 镜像并存。
 
 ### 2026-05-29 更新
 s6-overlay v3.2.3.0，保留官方 Alpine 基础镜像构建方式，并兼容旧式 `/etc/cont-init.d` 与 `/etc/services.d` 下游镜像。
@@ -62,14 +62,15 @@ s6-overlay v3 镜像由 `v3` 分支构建，标签带 `-s6v3` 后缀；不带后
 
 - `/etc/cont-init.d`、`/etc/cont-finish.d` 下的脚本以及 `/etc/services.d` 下的 `run`/`finish` 即使是 `0644` 也会在启动时补上可执行权限。
 - 保留 v2 的服务路径：`/var/run/s6/services/<服务名>` 指向 v3 的 `/run/service/<服务名>`，`s6-svc -r /var/run/s6/services/<服务名>` 这类命令继续可用。
+- s6 工具除了位于 `/command` 和 `/usr/bin`，也链接到 `/bin`，`#!/bin/execlineb`、`/bin/s6-svc` 这类 v2 绝对路径继续可用。
 - `CMD` 仍然能拿到容器环境变量（`S6_CMD_ARG0=/command/with-contenv`），与 v2 行为一致。
 - `S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0`：初始化脚本没有超时限制，与 v2 行为一致。
 
-仍然存在的差异：
+仍然存在的差异（完整的边界与已评估结论见 [docs/PRD.md](docs/PRD.md)）：
 
 - 启动日志更精简（`S6_VERBOSITY=1`），不再逐个打印 `[cont-init.d] xx: executing...`；排查问题时可用 `-e S6_VERBOSITY=2` 打开。
-- s6 工具位于 `/command`（同时在 `/usr/bin` 提供符号链接），不再存在于 `/bin`，例如 `#!/bin/execlineb` 需要改为 `#!/usr/bin/execlineb`。
 - `/etc/fix-attrs.d` 在 s6-overlay v3 中已被弃用，且上游脚本在递归处理包含多个条目的目录时会失败，请改在 `cont-init.d` 脚本中使用 `chown`/`chmod`。
+- `s6-svstat` 的文本输出多了 `pgid`（`up (pid N pgid N) ...`），解析该文本的脚本需要放宽匹配。
 - `s6-svscanctl -t /var/run/s6/services` 不再可用，需要在容器内停止容器时请使用 `/run/s6/basedir/bin/halt`。
 
 ### 获取镜像
