@@ -9,14 +9,19 @@
 # executable. v3 executes the files in place, and some downstream images keep
 # them as 0644 in git, so add the missing execute bits here. Files that are
 # already executable are left untouched.
+make_legacy_scripts_executable() {
+  # BusyBox and GNU find both support these single-bit tests.
+  find "$@" -type f ! -perm -100 ! -perm -010 ! -perm -001 -exec chmod a+x {} +
+}
+
 for dir in /etc/cont-init.d /etc/cont-finish.d; do
   if [ -d "${dir}" ]; then
-    find "${dir}" -type f ! -perm -111 -exec chmod a+x {} +
+    make_legacy_scripts_executable "${dir}"
   fi
 done
 
 if [ -d /etc/services.d ]; then
-  find /etc/services.d -type f \( -name run -o -name finish \) ! -perm -111 -exec chmod a+x {} +
+  make_legacy_scripts_executable /etc/services.d \( -name run -o -name finish \)
 fi
 
 # v2 exposed supervised services as /var/run/s6/services/<name>; v3 moved them

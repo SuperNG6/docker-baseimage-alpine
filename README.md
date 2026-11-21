@@ -53,7 +53,7 @@ Alpine v3.24.4
 
 s6-overlay v3 镜像由 `v3` 分支构建，标签带 `-s6v3` 后缀；不带后缀的标签仍是 `main` 分支的 s6-overlay v2 镜像，两者互不覆盖。
 
-GitHub Actions 每周检查 Alpine 和 s6-overlay v3 的稳定版本。任一组件有更新时，从 `v3` 构建并发布镜像。
+GitHub Actions 每周检查 Alpine 和 s6-overlay v3 的稳定版本。任一组件有更新时，从 `v3` 构建候选镜像。Actions 按构建 digest 验证 amd64 基础镜像和 aria2 启动流程，通过后才更新发布标签。
 
 | 标签 | 内容 |
 | --- | --- |
@@ -68,7 +68,7 @@ GitHub Actions 每周检查 Alpine 和 s6-overlay v3 的稳定版本。任一组
 - `/etc/cont-init.d`、`/etc/cont-finish.d` 下的脚本以及 `/etc/services.d` 下的 `run`/`finish` 即使是 `0644` 也会在启动时补上可执行权限。
 - 保留 v2 的服务路径：`/var/run/s6/services/<服务名>` 指向 v3 的 `/run/service/<服务名>`，`s6-svc -r /var/run/s6/services/<服务名>` 这类命令继续可用。
 - s6 工具除了位于 `/command` 和 `/usr/bin`，也链接到 `/bin`，`#!/bin/execlineb`、`/bin/s6-svc` 这类 v2 绝对路径继续可用。
-- `CMD` 仍然能拿到容器环境变量（`S6_CMD_ARG0=/command/with-contenv`），与 v2 行为一致。
+- 默认 `CMD` 通过上游 `with-contenv` 获取容器环境变量。服务通过命令名或 `/usr/bin/with-contenv` 启动时会应用 `UMASK`。
 - `S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0`：初始化脚本没有超时限制，与 v2 行为一致。
 
 仍然存在的差异（完整的边界与已评估结论见 [docs/PRD.md](docs/PRD.md)）：

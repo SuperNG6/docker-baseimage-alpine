@@ -5,7 +5,8 @@ shopt -s nullglob
 for FILENAME in /run/s6/container_environment/FILE__*; do
     SECRETFILE="$(cat "${FILENAME}")"
     if [[ -f "${SECRETFILE}" ]]; then
-        FILESTRIP="${FILENAME//FILE__/}"
+        name=${FILENAME##*/}
+        FILESTRIP="${FILENAME%/*}/${name#FILE__}"
         cat "${SECRETFILE}" >"${FILESTRIP}"
         echo "[env-init] ${FILESTRIP##*/} set from ${FILENAME##*/}"
     else

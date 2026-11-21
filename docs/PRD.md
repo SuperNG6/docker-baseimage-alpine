@@ -36,7 +36,7 @@
 | 上述目录中的脚本即使是 `0644` 也能执行 | `legacy-compat` 启动时补可执行位 |
 | `/var/run/s6/services/<服务名>` 可用于 `s6-svc`、`s6-svstat` | `legacy-compat` 建立 `/run/s6/services -> /run/service` |
 | `/bin/execlineb`、`/bin/s6-svc` 等 v2 绝对路径可用 | 构建时把 `/command/*` 链接到 `/bin` |
-| `CMD` 能拿到容器环境变量，容器退出码等于 `CMD` 退出码 | `S6_CMD_ARG0=/command/with-contenv` |
+| `CMD` 能拿到容器环境变量，容器退出码等于 `CMD` 退出码 | `S6_CMD_ARG0=/package/admin/s6-overlay/command/with-contenv` |
 | 初始化脚本没有超时限制 | `S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0` |
 | `with-contenv`、`PUID`/`PGID`、`UMASK`（仅对服务生效）、`FILE__` 密钥 | `root/usr/bin/with-contenv`、`01-envfile`、`10-adduser` |
 | 某个 `cont-init.d` 脚本失败后，后续脚本和服务仍继续 | s6-overlay 默认行为（`S6_BEHAVIOUR_IF_STAGE2_FAILS=0`） |
@@ -63,7 +63,7 @@
 ### 4.3 启动时修改脚本权限
 
 - `legacy-compat` 只对缺少可执行位的文件执行 `chmod a+x`，已可执行的文件不动。
-- 这会在容器可写层产生少量改动，属于预期。
+- `0700`、`0750` 等已有执行位的脚本保留原权限。可写绑定挂载中的全无执行位脚本也会补执行位，宿主机上可见该改动。
 
 ### 4.4 `S6_VERBOSITY=1`
 
@@ -72,8 +72,9 @@
 
 ### 4.5 `with-contenv` 包装脚本
 
-- `/usr/bin/with-contenv` 是 bash 包装脚本，用 `pwdx` 判断当前是否为服务进程，只对服务应用 `UMASK`，然后转交 `/command/with-contenv`。这是 LinuxServer.io 的做法，`cont-init.d` 脚本和 `CMD` 不受 `UMASK` 影响与 v2 一致。
-- `/bin/with-contenv` 是指向 `/command/with-contenv` 的链接，不经过包装脚本。v2 没有 `/bin/with-contenv`，没有下游依赖它。
+- `/usr/bin/with-contenv` 是 bash 包装脚本，用 `pwdx` 判断当前是否为服务进程，只对服务应用 `UMASK`，然后转交上游包内的 `/package/admin/s6-overlay/command/with-contenv`。这是 LinuxServer.io 的做法，`cont-init.d` 脚本和 `CMD` 不受 `UMASK` 影响与 v2 一致。
+- 服务按命令名调用 `with-contenv` 时，`/command/with-contenv` 执行同一份包装逻辑。两个入口各自独立，方便下游覆盖 `/usr/bin/with-contenv` 后仍能转交给 `/command/with-contenv`。
+- `/bin/with-contenv` 和默认 CMD 入口直接使用上游助手。v2 没有 `/bin/with-contenv`，没有下游依赖它。
 
 ### 4.6 s6-overlay 发布包的校验
 
@@ -129,6 +130,7 @@
 
 - 默认分支的 `publish-s6v3.yml` 每周一 02:17 UTC 检查 Alpine 和 s6-overlay v3 的稳定版本，也支持手动触发。复用的 `build-s6v3.yml` 从 `v3` 检出源码。上游有更新或镜像仓库缺少当前版本时才构建并发布。
 - 版本检查从 Docker Hub 和 GHCR 已发布的镜像中读取 Alpine 与 s6-overlay 版本。发现更新时，构建使用检查阶段选定的版本。
+- 发布工作流按本次构建的 amd64 digest 运行基础契约和 docker-aria2 启动测试，全部通过才合并五个架构并更新公开标签。
 - `version.txt` 当前没有被任何工作流引用。
 
 ## 6. 验证方式
@@ -138,7 +140,7 @@
 | base 契约测试 | `.github/scripts/test-base-contract.sh` | 第 3 节的全部承诺，使用 v2 风格夹具镜像（脚本故意设为 `0644`） |
 | 下游启动测试 | `.github/scripts/test-docker-aria2-s6v3-startup.sh` | `docker-aria2` master 的 a2b 变体在本 base 上启动、受监管、被杀后重启 |
 
-两者都由 `Test Downstream.yml` 在 `v3` 分支的相关改动上运行。
+`Test Downstream.yml` 和发布作业复用 `test-s6v3-candidate.yml`，分别验证源码构建和待发布的镜像。
 
 2026-11-15 的人工验证结果：
 
