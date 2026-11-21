@@ -41,7 +41,7 @@ ENV PS1="$(whoami)@$(hostname):$(pwd)\\$ " \
 	HOME="/root" \
 	TERM="xterm" \
 	S6_CMD_WAIT_FOR_SERVICES_MAXTIME="0" \
-	S6_CMD_ARG0="/command/with-contenv" \
+	S6_CMD_ARG0="/package/admin/s6-overlay/command/with-contenv" \
 	S6_STAGE2_HOOK="/etc/s6-overlay/scripts/legacy-compat" \
 	S6_VERBOSITY=1
 
@@ -74,5 +74,12 @@ RUN \
 
 # add local files
 COPY root/ /
+
+# s6 puts /command first on service PATH. Keep the direct /bin entry point
+# and CMD on the upstream helper. Install an independent copy so downstreams
+# can still replace /usr/bin/with-contenv and delegate to /command/with-contenv.
+RUN test -x /package/admin/s6-overlay/command/with-contenv \
+    && ln -sf /package/admin/s6-overlay/command/with-contenv /bin/with-contenv \
+    && install -m 0755 /usr/bin/with-contenv /command/with-contenv
 
 ENTRYPOINT ["/init"]

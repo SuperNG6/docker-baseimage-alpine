@@ -84,6 +84,8 @@ cat >"${root}/etc/cont-init.d/20-fixture" <<'EOF'
 {
     echo "FOO=[${FOO}]"
     echo "MULTI=[${MULTI}]"
+    echo "PROFILE__TOKEN=[${PROFILE__TOKEN}] PROTOKEN=[${PROTOKEN}]"
+    echo "umask=$(umask)"
     echo "SECRET=[${SECRET}]"
     echo "id=$(id -u):$(id -g)"
     echo "tools=$(command -v s6-setuidgid s6-svc s6-svstat execlineb printcontenv with-contenv | wc -l)"
@@ -129,6 +131,12 @@ echo "[fixture] cont-finish ran FOO=[${FOO}]"
 EOF
 
 find "${root}" -type f -exec chmod 0644 {} +
+# Exercise a restricted bind mount and a separate service with a restricted run script.
+printf '#!/bin/sh\ntouch /tmp/private-init-ran\n' >"${work}/private-init"
+chmod 0700 "${work}/private-init"
+mkdir -p "${root}/etc/services.d/private"
+printf '#!/bin/sh\nexec sleep 100000\n' >"${root}/etc/services.d/private/run"
+chmod 0750 "${root}/etc/services.d/private/run"
 printf 's3cr3t value' >"${work}/secret.txt"
 chmod 0644 "${work}/secret.txt"
 # shellcheck disable=SC2016 # ${BASE} is expanded by docker build, not by this shell
@@ -138,8 +146,10 @@ docker build -q --build-arg BASE="${base}" -t "${tag}" "${work}" >/dev/null
 
 # --- service mode ------------------------------------------------------------
 docker run -d --name "${container}" \
-    -e PUID=1500 -e PGID=1600 -e UMASK=002 \
+    -e PUID=1500 -e PGID=1600 -e UMASK=077 \
     -e FOO=bar -e "MULTI=a b  c" \
+    -e FILE__PROFILE__TOKEN=/secret.txt -e PROTOKEN=original \
+    -v "${work}/private-init:/etc/cont-init.d/42-private" \
     -e FILE__SECRET=/secret.txt \
     -v "${work}/secret.txt:/secret.txt:ro" \
     "${tag}" >/dev/null
@@ -156,14 +166,21 @@ check "/config owned by abc" "1500:1600" "$(docker exec "${container}" stat -c '
 check_contains "0644 cont-init script runs with container env" "FOO=[bar]" "${init_out}"
 check_contains "env values keep inner whitespace" "MULTI=[a b  c]" "${init_out}"
 check_contains "FILE__ secret visible to cont-init" "SECRET=[s3cr3t value]" "${init_out}"
+check_contains "FILE__ strips only the leading prefix" "PROFILE__TOKEN=[s3cr3t value] PROTOKEN=[original]" "${init_out}"
+check_contains "cont-init keeps its default umask" "umask=0022" "${init_out}"
+check "restricted init script runs" "yes" "$(docker exec "${container}" sh -c 'test -f /tmp/private-init-ran && echo yes')"
+check "host-mounted init script keeps its mode" "700" "$(stat -c %a "${work}/private-init")"
+check "executable service script keeps its mode" "750" "$(docker exec "${container}" stat -c %a /etc/services.d/private/run)"
 check_contains "cont-init runs as root" "id=0:0" "${init_out}"
 check_contains "s6 tools are on PATH in cont-init" "tools=6" "${init_out}"
 check "cont-init continues after a failing script" "yes" \
     "$(docker exec "${container}" sh -c 'test -f /tmp/after-fail && echo yes || echo no')"
 check_contains "0644 service run script gets container env" "FOO=[bar]" "${svc_out}"
 check_contains "FILE__ secret visible to services" "SECRET=[s3cr3t value]" "${svc_out}"
-check_contains "UMASK applies to services" "umask=0002" "${svc_out}"
+check_contains "UMASK applies to services" "umask=0077" "${svc_out}"
 check "execlineb service gets container env" "FOO=[bar]" "$(docker exec "${container}" cat /tmp/exl.out)"
+check "bare with-contenv honors service UMASK" "600" "$(docker exec "${container}" stat -c %a /tmp/exl.out)"
+check "absolute service wrapper honors UMASK" "600" "$(docker exec "${container}" stat -c %a /tmp/svc.out)"
 check "services drop privileges with s6-setuidgid" "2" \
     "$(docker exec "${container}" sh -c 'ps -eo user,args | grep -c "^abc  *sleep [12]00000"')"
 check "s6 tools are on PATH for docker exec" "/usr/bin/s6-svc" \
@@ -200,11 +217,25 @@ docker rm "${container}" >/dev/null
 
 # --- CMD mode ----------------------------------------------------------------
 set +e
-cmd_out="$(docker run --rm -e FOO=bar "${tag}" sh -c 'echo "cmd FOO=[${FOO}]"; exit 7' 2>&1)"
+cmd_out="$(docker run --rm -e FOO=bar -e UMASK=077 "${tag}" sh -c 'echo "cmd FOO=[${FOO}] umask=$(umask)"; exit 7' 2>&1)"
 cmd_rc=$?
 set -e
 check_contains "CMD receives the container env" "cmd FOO=[bar]" "${cmd_out}"
+check_contains "CMD keeps its default umask" "umask=0022" "${cmd_out}"
 check "container exits with the CMD exit code" "7" "${cmd_rc}"
+
+# Some downstreams provide their own /usr/bin wrapper around the overlay command.
+cat >"${work}/downstream-wrapper" <<'EOF'
+#!/bin/sh
+[ -z "${WRAPPER_ENTERED:-}" ] || exit 99
+export WRAPPER_ENTERED=1
+exec /command/with-contenv "$@"
+EOF
+chmod 0755 "${work}/downstream-wrapper"
+check "downstream wrappers can delegate to /command/with-contenv" "bar" \
+    "$(docker run --rm --network none -e FOO=bar \
+        -v "${work}/downstream-wrapper:/usr/bin/with-contenv:ro" \
+        "${base}" /usr/bin/with-contenv printenv FOO 2>/dev/null | tail -n 1)"
 
 if [ "${failures}" -gt 0 ]; then
     echo "${failures} base contract check(s) failed" >&2

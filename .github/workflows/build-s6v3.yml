@@ -113,10 +113,17 @@ jobs:
           path: /tmp/digests/*
           retention-days: 1
 
+  test_candidate:
+    needs: [check_version, build]
+    uses: ./.github/workflows/test-s6v3-candidate.yml
+    with:
+      source_sha: ${{ needs.check_version.outputs.source_sha }}
+      candidate_repository: superng6/alpine
+
   merge:
     runs-on: ubuntu-latest
-    # 依赖检查版本和构建作业
-    needs: [check_version, build]
+    # 候选镜像通过运行时测试后才更新公开标签
+    needs: [check_version, build, test_candidate]
     if: needs.check_version.outputs.should_build == 'true'
     permissions:
       contents: read

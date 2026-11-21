@@ -8,4 +8,4 @@ if [[ -f /run/s6/container_environment/UMASK ]] &&
     umask "$(cat /run/s6/container_environment/UMASK)"
 fi
 
-exec /command/with-contenv "$@"
+exec /package/admin/s6-overlay/command/with-contenv "$@"
