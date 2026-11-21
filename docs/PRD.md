@@ -127,8 +127,8 @@
 
 ### 5.4 CI 相关
 
-- GitHub 的定时触发只在默认分支生效，`v3` 分支上 `Build Image.yml` 的 `schedule` 不会运行，需要手动 `workflow_dispatch`。这是 GitHub 的机制，不是配置错误。
-- actionlint 对 `Build Image.yml` 报的两条 shellcheck 提示（`SC2086`、`SC2046`）来自 `main` 分支已有的写法，其中 `$(printf ...)` 需要分词，是有意的。
+- 默认分支的 `publish-s6v3.yml` 每周一 02:17 UTC 检查 Alpine 和 s6-overlay v3 的稳定版本，也支持手动触发。复用的 `build-s6v3.yml` 从 `v3` 检出源码。上游有更新或镜像仓库缺少当前版本时才构建并发布。
+- 版本检查从 Docker Hub 和 GHCR 已发布的镜像中读取 Alpine 与 s6-overlay 版本。发现更新时，构建使用检查阶段选定的版本。
 - `version.txt` 当前没有被任何工作流引用。
 
 ## 6. 验证方式

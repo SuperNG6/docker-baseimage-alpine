@@ -1,100 +1,84 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# 版本检查脚本
-# 用于比较官方 Alpine 版本与我们镜像的版本，决定是否需要构建新镜像
+hub_image=${1:?需要 Docker Hub 的最新 s6 v3 镜像引用}
+ghcr_image=${2:?需要 GHCR 的最新 s6 v3 镜像引用}
+alpine_pattern='^[0-9]+\.[0-9]+\.[0-9]+$'
+overlay_pattern='^3(\.[0-9]+){2,3}$'
 
-# 检查参数
-if [ -z "$1" ]; then
-    echo "::error::错误：未提供 Docker 镜像名称。用法：$0 <镜像名称> [标签后缀]"
+latest_alpine=$(
+    curl -fsSL --retry 3 'https://hub.docker.com/v2/repositories/library/alpine/tags/?page_size=100&ordering=last_updated' |
+        jq -r --arg pattern "$alpine_pattern" '.results[].name | select(test($pattern))' |
+        sort -Vr | sed -n '1p'
+)
+latest_overlay=$(
+    gh api --paginate 'repos/just-containers/s6-overlay/releases?per_page=100' \
+        --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name | ltrimstr("v") | select(test("^3(\\.[0-9]+){2,3}$"))' |
+        sort -Vr | sed -n '1p'
+)
+
+if [[ ! $latest_alpine =~ $alpine_pattern || ! $latest_overlay =~ $overlay_pattern ]]; then
+    echo '::error::未找到可用的 Alpine 或 s6-overlay v3 稳定版本' >&2
     exit 1
 fi
 
-DOCKER_IMAGE="$1"
-# 可选的标签后缀（例如 -s6v3）：只与带该后缀的已发布标签比较
-TAG_SUFFIX="${2:-}"
-
-echo "正在检查官方 Alpine 版本..." >&2
-
-# 获取官方 Alpine 最新版本
-API_URL='https://hub.docker.com/v2/repositories/library/alpine/tags/?page_size=100&ordering=last_updated'
-RESPONSE=$(curl -fsSL --retry 3 --retry-delay 2 "$API_URL")
-
-if [ -z "$RESPONSE" ]; then
-    echo "::error::无法从 Docker Hub API 获取 Alpine 标签信息。" >&2
-    exit 1
-fi
-
-OFFICIAL_VERSION=$(echo "$RESPONSE" | jq -r '.results[].name' | grep -E '^[0-9]+(\.[0-9]+){1,2}$' | sort -Vr | head -n 1)
-
-if [ -z "$OFFICIAL_VERSION" ]; then
-    echo "::error::无法从 Docker Hub API 响应中解析出有效的 Alpine 版本标签。" >&2
-    exit 1
-fi
-
-echo "官方 Alpine 最新版本: $OFFICIAL_VERSION" >&2
-
-# 获取我们镜像的最新版本
-OUR_API_URL="https://hub.docker.com/v2/repositories/${DOCKER_IMAGE}/tags/?page_size=100&ordering=last_updated"
-OUR_RESPONSE=$(curl -fsSL --retry 3 --retry-delay 2 "$OUR_API_URL" || echo '{"results":[]}')
-
-# 提取我们镜像中符合 x.y.z<后缀> 格式的最新版本（去掉后缀后比较）
-OUR_VERSION=$(echo "$OUR_RESPONSE" | jq -r --arg s "$TAG_SUFFIX" '.results[].name | select(endswith($s)) | .[:(length - ($s | length))]' | grep -E '^[0-9]+(\.[0-9]+){1,2}$' | sort -Vr | head -n 1 || echo "0.0.0")
-
-echo "我们的镜像最新版本${TAG_SUFFIX:+（标签后缀 ${TAG_SUFFIX}）}: ${OUR_VERSION:-无}" >&2
-
-# 版本比较函数
-version_compare() {
-    if [[ $1 == $2 ]]; then
-        return 0  # 版本相等
+read_image_versions() {
+    local image=$1 pull_output
+    if pull_output=$(docker pull --quiet --platform linux/amd64 "$image" 2>&1); then
+        # 读取已安装的版本，兼容没有版本标签的镜像。
+        docker run --rm --pull=never --platform linux/amd64 --network none \
+            --entrypoint /bin/sh "$image" -ec '
+                alpine=$(cat /etc/alpine-release)
+                overlay=$(readlink /package/admin/s6-overlay)
+                overlay=$(basename "$overlay")
+                printf "%s %s\n" "$alpine" "${overlay#s6-overlay-}"
+            '
+    elif [[ $pull_output == *'manifest unknown'* ||
+            $pull_output == *'Error response from daemon:'*' not found'* ]]; then
+        echo "$image 尚未发布" >&2
+    else
+        printf '::error::无法检查 %s\n%s\n' "$image" "$pull_output" >&2
+        return 1
     fi
-    local IFS=.
-    local i ver1=($1) ver2=($2)
-    # 填充版本数组到相同长度
-    for ((i=${#ver1[@]}; i<${#ver2[@]}; i++)); do
-        ver1[i]=0
-    done
-    for ((i=${#ver2[@]}; i<${#ver1[@]}; i++)); do
-        ver2[i]=0
-    done
-    # 逐个比较版本号组件
-    for ((i=0; i<${#ver1[@]}; i++)); do
-        if [[ -z ${ver2[i]} ]]; then
-            ver2[i]=0
-        fi
-        if ((10#${ver1[i]} > 10#${ver2[i]})); then
-            return 1  # 第一个版本更高
-        fi
-        if ((10#${ver1[i]} < 10#${ver2[i]})); then
-            return 2  # 第二个版本更高
-        fi
-    done
-    return 0  # 版本相等
 }
 
-# 比较版本
-version_compare "$OFFICIAL_VERSION" "$OUR_VERSION"
-comparison_result=$?
+version_is_newer() {
+    [[ $1 != "$2" && $(printf '%s\n' "$1" "$2" | sort -V | tail -n 1) == "$1" ]]
+}
 
-if [ $comparison_result -eq 1 ]; then
-    echo "官方版本 ($OFFICIAL_VERSION) 比我们的版本 ($OUR_VERSION) 更高，需要构建新镜像" >&2
-    SHOULD_BUILD="true"
-elif [ $comparison_result -eq 0 ]; then
-    echo "版本相同 ($OFFICIAL_VERSION)，无需构建" >&2
-    SHOULD_BUILD="false"
-else
-    echo "我们的版本 ($OUR_VERSION) 比官方版本 ($OFFICIAL_VERSION) 更高或相等，无需构建" >&2
-    SHOULD_BUILD="false"
+hub_versions=$(read_image_versions "$hub_image")
+ghcr_versions=$(read_image_versions "$ghcr_image")
+
+echo "上游版本：Alpine $latest_alpine，s6-overlay $latest_overlay"
+echo "Docker Hub 版本：${hub_versions:-未发布}"
+echo "GHCR 版本：${ghcr_versions:-未发布}"
+
+# 同时比较两个仓库；如果上游标签回退，继续使用已发布的较高版本。
+alpine=$latest_alpine
+overlay=$latest_overlay
+for versions in "$hub_versions" "$ghcr_versions"; do
+    [[ -n $versions ]] || continue
+    read -r published_alpine published_overlay <<< "$versions"
+    if [[ ! $published_alpine =~ $alpine_pattern || ! $published_overlay =~ $overlay_pattern ]]; then
+        echo "::error::无法解析已发布镜像的版本：$versions" >&2
+        exit 1
+    fi
+    if version_is_newer "$published_alpine" "$alpine"; then
+        alpine=$published_alpine
+    fi
+    if version_is_newer "$published_overlay" "$overlay"; then
+        overlay=$published_overlay
+    fi
+done
+
+should_build=false
+if [[ $hub_versions != "$alpine $overlay" || $ghcr_versions != "$alpine $overlay" ]]; then
+    should_build=true
 fi
 
-# 计算次版本号
-MINOR_VERSION=$(echo "$OFFICIAL_VERSION" | cut -d '.' -f 1-2)
-
-echo "检查完成: should_build=$SHOULD_BUILD, full_version=$OFFICIAL_VERSION, minor_version=$MINOR_VERSION" >&2
-
-# --- GitHub Actions 输出 ---
-# 使用多行字符串向 $GITHUB_OUTPUT 写入，这是官方推荐的方式
 {
-  echo "should_build=${SHOULD_BUILD}"
-  echo "full_version=${OFFICIAL_VERSION}"
-  echo "minor_version=${MINOR_VERSION}"
-} >> "$GITHUB_OUTPUT"
+    printf 'should_build=%s\n' "$should_build"
+    printf 'full_version=%s\n' "$alpine"
+    printf 'minor_version=%s\n' "${alpine%.*}"
+    printf 's6_overlay_version=%s\n' "$overlay"
+} >> "${GITHUB_OUTPUT:?需要设置 GITHUB_OUTPUT}"

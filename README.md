@@ -53,6 +53,8 @@ Alpine v3.24.4
 
 s6-overlay v3 镜像由 `v3` 分支构建，标签带 `-s6v3` 后缀；不带后缀的标签仍是 `main` 分支的 s6-overlay v2 镜像，两者互不覆盖。
 
+GitHub Actions 每周检查 Alpine 和 s6-overlay v3 的稳定版本。任一组件有更新时，从 `v3` 构建并发布镜像。
+
 | 标签 | 内容 |
 | --- | --- |
 | `latest-s6v3` | 最新 Alpine + s6-overlay v3 |
