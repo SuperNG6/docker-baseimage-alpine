@@ -1,17 +1,20 @@
 #!/bin/sh
-# Match overlay's required search paths, then insert a directory containing
-# only with-contenv just before /command. Explicit command paths stay upstream.
-PATH=${PATH:-/bin}
-for dir in /bin /usr/bin /command; do
+# Only PATH should change before overlay captures the caller's environment.
+ensure_path() {
     case ":$PATH:" in
-        *:"$dir":*) ;;
-        *) PATH="$dir:$PATH" ;;
+        *:"$1":*) ;;
+        *) PATH="$1:$PATH" ;;
     esac
-done
-path=:${PATH}:
-before=${path%%:/command:*}
-after=${path#*:/command:}
-path="$before:/usr/libexec/superng6/compat-bin:/command:$after"
-PATH=${path#:}
+}
+
+PATH=${PATH:-/bin}
+ensure_path /bin
+ensure_path /usr/bin
+ensure_path /command
+
+# Insert the with-contenv shim before /command, retaining other path entries.
+PATH=:${PATH}:
+PATH="${PATH%%:/command:*}:/usr/libexec/superng6/compat-bin:/command:${PATH#*:/command:}"
+PATH=${PATH#:}
 export PATH="${PATH%:}"
 exec /usr/libexec/superng6/overlay-init "$@"

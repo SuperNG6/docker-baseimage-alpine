@@ -153,6 +153,9 @@ touch "${bundle}/worker"
 printf '#!/usr/bin/with-contenv sh\ntouch /tmp/native-file\nexec sleep 100000\n' >"${native}/run"
 chmod 0755 "${native}/run"
 printf 's3cr3t value' >"${work}/secret.txt"
+mkdir -p "${work}/secret-cases"
+: > "${work}/secret-cases/empty"
+printf 'a\nb\n\n' > "${work}/secret-cases/multiline"
 chmod 0644 "${work}/secret.txt"
 # shellcheck disable=SC2016 # ${BASE} is expanded by docker build, not by this shell
 printf 'ARG BASE\nFROM ${BASE}\nCOPY root/ /\n' >"${work}/Dockerfile"
@@ -166,6 +169,8 @@ docker run -d --name "${container}" \
     -e FOO=bar -e "MULTI=a b  c" \
     -e FILE__PROFILE__TOKEN=/secret.txt -e PROTOKEN=original \
     -v "${work}/private-init:/etc/cont-init.d/42-private" \
+    -e FILE__EMPTY_VALUE=/secret-cases/empty -e FILE__MULTILINE_VALUE=/secret-cases/multiline \
+    -v "${work}/secret-cases:/secret-cases:ro" \
     -e FILE__SECRET=/secret.txt \
     -v "${work}/secret.txt:/secret.txt:ro" \
     "${tag}" >/dev/null
@@ -188,6 +193,10 @@ check "/config owned by abc" "1500:1600" "$(docker exec "${container}" stat -c '
 check_contains "0644 cont-init script runs with container env" "FOO=[bar]" "${init_out}"
 check_contains "env values keep inner whitespace" "MULTI=[a b  c]" "${init_out}"
 check_contains "FILE__ secret visible to cont-init" "SECRET=[s3cr3t value]" "${init_out}"
+check "FILE__ imports an empty file as a present, empty variable" "set:0" \
+    "$(docker exec "${container}" with-contenv sh -c 'printf "%s:%s" "${EMPTY_VALUE+set}" "${#EMPTY_VALUE}"')"
+check "FILE__ preserves all multiline bytes including the final newlines" "match" \
+    "$(docker exec "${container}" with-contenv sh -c 'printf %s "$MULTILINE_VALUE" | cmp -s - /secret-cases/multiline && echo match')"
 check_contains "FILE__ strips only the leading prefix" "PROFILE__TOKEN=[s3cr3t value] PROTOKEN=[original]" "${init_out}"
 check_contains "cont-init keeps its default umask" "umask=0022" "${init_out}"
 check "restricted init script runs" "yes" "$(docker exec "${container}" sh -c 'test -f /tmp/private-init-ran && echo yes')"
@@ -239,10 +248,15 @@ docker rm "${container}" >/dev/null
 
 # --- CMD mode ----------------------------------------------------------------
 set +e
-cmd_out="$(docker run --rm -e FOO=bar -e UMASK=077 "${tag}" sh -c 'echo "cmd FOO=[${FOO}] umask=$(umask)"; exit 7' 2>&1)"
+cmd_out="$(docker run --rm -e FOO=bar -e UMASK=077 \
+    -e dir=/downloads -e path=/data -e before=left -e after=right "${tag}" sh -c '
+        echo "cmd FOO=[${FOO}] umask=$(umask)"
+        printf "caller env <%s><%s><%s><%s>\n" "$dir" "$path" "$before" "$after"
+        exit 7' 2>&1)"
 cmd_rc=$?
 set -e
 check_contains "CMD receives the container env" "cmd FOO=[bar]" "${cmd_out}"
+check_contains "init preserves caller-supplied environment names" "caller env </downloads></data><left><right>" "${cmd_out}"
 check_contains "CMD keeps its default umask" "umask=0022" "${cmd_out}"
 check "container exits with the CMD exit code" "7" "${cmd_rc}"
 

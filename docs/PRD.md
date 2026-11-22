@@ -73,6 +73,7 @@
 ### 4.5 `with-contenv` 包装脚本
 
 - 服务通过命令名或 `/usr/bin/with-contenv` 使用本镜像的包装脚本。它按当前目录与 `/run/service` 入口是否指向同一目录识别服务，支持原生 longrun 和旧式服务。s6-rc 的 oneshot runner 执行初始化脚本时保留初始化进程的掩码。
+- 默认的环境导入模式下，`FILE__NAME` 的文本文件按内容导入，保留末尾换行；空文件生成已定义的空变量。上游 `with-contenv` 使用 `s6-envdir -Lf` 读取环境目录，写入时需要额外的换行作为终止符。[s6-envdir 选项](https://skarnet.org/software/s6/s6-envdir.html)
 - `/command/with-contenv`、`/bin/with-contenv` 和默认 CMD 使用上游助手。下游自定义包装脚本可设置自己的掩码，再调用绝对路径导入容器环境。
 - `S6_STAGE2_HOOK` 由上游执行。下游钩子成功后，s6-rc 根据依赖执行基础镜像的兼容处理。钩子失败时沿用上游的 `S6_BEHAVIOUR_IF_STAGE2_FAILS` 策略。
 

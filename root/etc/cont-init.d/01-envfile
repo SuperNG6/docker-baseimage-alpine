@@ -7,8 +7,13 @@ for FILENAME in /run/s6/container_environment/FILE__*; do
     if [[ -f "${SECRETFILE}" ]]; then
         name=${FILENAME##*/}
         FILESTRIP="${FILENAME%/*}/${name#FILE__}"
-        cat "${SECRETFILE}" >"${FILESTRIP}"
-        echo "[env-init] ${FILESTRIP##*/} set from ${FILENAME##*/}"
+        # The overlay's s6-envdir -Lf consumes one terminating newline.
+        # A newline alone encodes a present, empty environment variable.
+        if { cat -- "${SECRETFILE}" && printf '\n'; } >"${FILESTRIP}"; then
+            echo "[env-init] ${FILESTRIP##*/} set from ${FILENAME##*/}"
+        else
+            echo "[env-init] cannot import ${FILENAME##*/}" >&2
+        fi
     else
         echo "[env-init] cannot find secret in ${FILENAME##*/}"
     fi
