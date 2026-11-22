@@ -4,11 +4,6 @@ on:
   schedule:
     - cron: "17 2 * * 1"
   workflow_dispatch:
-    inputs:
-      force_build:
-        description: Rebuild the current versions to publish source fixes
-        type: boolean
-        default: false
 
 concurrency:
   group: alpine-s6v3-publish
@@ -20,6 +15,4 @@ jobs:
       contents: write
       packages: write
     uses: SuperNG6/docker-baseimage-alpine/.github/workflows/build-s6v3.yml@v3
-    with:
-      force_build: ${{ github.event_name == 'workflow_dispatch' && inputs.force_build }}
     secrets: inherit
