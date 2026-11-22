@@ -137,6 +137,21 @@ chmod 0700 "${work}/private-init"
 mkdir -p "${root}/etc/services.d/private"
 printf '#!/bin/sh\nexec sleep 100000\n' >"${root}/etc/services.d/private/run"
 chmod 0750 "${root}/etc/services.d/private/run"
+# A shared non-executable script can be linked from several legacy entry points.
+mkdir -p "${root}/opt/shared" "${root}/etc/services.d/linked"
+mv "${root}/etc/cont-init.d/40-after" "${root}/opt/shared/after"
+ln -s /opt/shared/after "${root}/etc/cont-init.d/40-after"
+printf '#!/bin/sh\ntouch /tmp/linked-ready\nexec sleep 100000\n' >"${root}/opt/shared/run"
+chmod 0644 "${root}/opt/shared/run"
+ln -s /opt/shared/run "${root}/etc/services.d/linked/run"
+
+native="${root}/etc/s6-overlay/s6-rc.d/worker"
+bundle="${root}/etc/s6-overlay/user-bundles.d/user/contents.d"
+mkdir -p "${native}" "${bundle}"
+echo longrun >"${native}/type"
+touch "${bundle}/worker"
+printf '#!/usr/bin/with-contenv sh\ntouch /tmp/native-file\nexec sleep 100000\n' >"${native}/run"
+chmod 0755 "${native}/run"
 printf 's3cr3t value' >"${work}/secret.txt"
 chmod 0644 "${work}/secret.txt"
 # shellcheck disable=SC2016 # ${BASE} is expanded by docker build, not by this shell
@@ -146,6 +161,7 @@ docker build -q --build-arg BASE="${base}" -t "${tag}" "${work}" >/dev/null
 
 # --- service mode ------------------------------------------------------------
 docker run -d --name "${container}" \
+    -e S6_STAGE2_HOOK="touch /tmp/downstream-hook-ran" \
     -e PUID=1500 -e PGID=1600 -e UMASK=077 \
     -e FOO=bar -e "MULTI=a b  c" \
     -e FILE__PROFILE__TOKEN=/secret.txt -e PROTOKEN=original \
@@ -156,6 +172,12 @@ docker run -d --name "${container}" \
 
 wait_for "legacy service svc" docker exec "${container}" test -f /tmp/svc.out
 wait_for "legacy service exl" docker exec "${container}" test -f /tmp/exl.out
+
+wait_for "linked service entry point" docker exec "${container}" test -f /tmp/linked-ready
+wait_for "native longrun worker" docker exec "${container}" test -f /tmp/native-file
+check "native longrun honors UMASK regardless of name" "600" "$(docker exec "${container}" stat -c %a /tmp/native-file)"
+check "downstream stage-2 hook runs with its arguments" "yes" \
+    "$(docker exec "${container}" sh -c 'test -f /tmp/downstream-hook-ran && echo yes')"
 
 init_out="$(docker exec "${container}" cat /tmp/init.out)"
 svc_out="$(docker exec "${container}" cat /tmp/svc.out)"
@@ -229,6 +251,7 @@ cat >"${work}/downstream-wrapper" <<'EOF'
 #!/bin/sh
 [ -z "${WRAPPER_ENTERED:-}" ] || exit 99
 export WRAPPER_ENTERED=1
+umask 077
 exec /command/with-contenv "$@"
 EOF
 chmod 0755 "${work}/downstream-wrapper"
@@ -236,6 +259,12 @@ check "downstream wrappers can delegate to /command/with-contenv" "bar" \
     "$(docker run --rm --network none -e FOO=bar \
         -v "${work}/downstream-wrapper:/usr/bin/with-contenv:ro" \
         "${base}" /usr/bin/with-contenv printenv FOO 2>/dev/null | tail -n 1)"
+
+check_contains "delegation preserves the downstream service's stricter umask" "delegated mode=600" \
+    "$(docker run --rm --network none -e UMASK=002 \
+        -v "${work}/downstream-wrapper:/usr/bin/with-contenv:ro" \
+        "${tag}" sh -ec 'for i in 1 2 3 4 5; do test ! -f /tmp/svc.out || break; sleep 1; done; stat -c "delegated mode=%a" /tmp/svc.out' \
+        2>/dev/null)"
 
 if [ "${failures}" -gt 0 ]; then
     echo "${failures} base contract check(s) failed" >&2

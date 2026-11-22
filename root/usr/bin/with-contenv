@@ -1,11 +1,15 @@
 #!/bin/bash
 
-# Keep LSIO-style UMASK support while delegating to s6-overlay v3's helper.
-if [[ -f /run/s6/container_environment/UMASK ]] &&
-    { [[ "$(pwdx $$ 2>/dev/null)" =~ "/run/s6/legacy-services/" ]] ||
-        [[ "$(pwdx $$ 2>/dev/null)" =~ "/run/s6/services/" ]] ||
-        [[ "$(pwdx $$ 2>/dev/null)" =~ "/servicedirs/svc-" ]]; }; then
-    umask "$(cat /run/s6/container_environment/UMASK)"
+# s6-supervise starts run and finish in the service directory. Compare
+# directories by inode since /run/service entries can be symbolic links.
+# Legacy init and native oneshots inherit the internal oneshot runner's cwd.
+if [[ -f /run/s6/container_environment/UMASK && ! . -ef /run/service/s6rc-oneshot-runner ]]; then
+    cwd=$(pwd -P)
+    name=${cwd##*/}
+    parent=${cwd%/*}
+    if [[ . -ef /run/service/$name || . -ef /run/service/${parent##*/}/log ]]; then
+        umask "$(</run/s6/container_environment/UMASK)"
+    fi
 fi
 
-exec /package/admin/s6-overlay/command/with-contenv "$@"
+exec /command/with-contenv "$@"

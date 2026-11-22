@@ -1,0 +1,18 @@
+#!/bin/sh
+
+# Only follow script entry points. Never walk a tree reached via a link.
+etc=/etc
+if profile=$(printcontenv S6_RUNTIME_PROFILE) && [ -n "$profile" ]; then
+    etc="/etc/cont-profile.d/$profile"
+fi
+for script in "$etc"/cont-init.d/* "$etc"/cont-finish.d/* \
+              "$etc"/services.d/*/run "$etc"/services.d/*/finish \
+              "$etc"/services.d/*/log/run "$etc"/services.d/*/log/finish; do
+    [ -f "$script" ] || continue
+    [ ! -x "$script" ] || continue
+    find -H "$script" -prune -type f ! -perm -100 ! -perm -010 ! -perm -001 -exec chmod a+x {} \;
+done
+
+if [ ! -e /run/s6/services ] && [ ! -L /run/s6/services ]; then
+    ln -s /run/service /run/s6/services
+fi

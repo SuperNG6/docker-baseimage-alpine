@@ -84,14 +84,13 @@ jobs:
           echo "替换前："
           grep -nE '^FROM ' Dockerfile
 
-          perl -0pi -e 's{^(FROM\s+)(?:ghcr\.io/)?superng6/alpine(?::[^\s]+)?(\s*(?:AS\s+\S+)?)$}{$1$ENV{BASE_TEST_IMAGE}$2}gmi' Dockerfile
-
-          echo "替换后："
-          grep -nE '^FROM ' Dockerfile
-          if grep -qE '^(FROM\s+)(?:ghcr\.io/)?superng6/alpine' Dockerfile; then
-            echo "仍存在未替换的 superng6/alpine FROM"
-            exit 1
-          fi
+          perl -pi -e '
+            if (/^\h*FROM\h/i) {
+              $count += s{^(\h*FROM\h+(?:--platform=\S+\h+)?)(?:(?:docker\.io|ghcr\.io)/)?superng6/alpine(?:[:@]\S+)?(?=\s|$)}{$1$ENV{BASE_TEST_IMAGE}}i;
+            }
+            END { die "未找到可替换的 Alpine 基础镜像\n" unless $count }
+          ' Dockerfile
+          grep -inE '^[[:blank:]]*FROM[[:blank:]]' Dockerfile
 
           test -d root/etc/cont-init.d
           test -d root/etc/services.d
@@ -107,6 +106,13 @@ jobs:
             --build-arg A2B_DEFAULT=true \
             -t "${DOWNSTREAM_TEST_IMAGE}" \
             .
+
+      - name: 验证下游运行镜像继承候选镜像的全部层
+        run: |
+          docker image inspect "$BASE_TEST_IMAGE" "$DOWNSTREAM_TEST_IMAGE" | jq -e '
+            .[0].RootFS.Layers as $base |
+            ($base | length) > 0 and .[1].RootFS.Layers[:($base | length)] == $base
+          '
 
       - name: 启动 docker-aria2 s6 兼容性容器
         run: |

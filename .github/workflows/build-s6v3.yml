@@ -15,11 +15,13 @@ env:
   # 不覆盖 main 分支（s6-overlay v2）发布的 3.24.4 / 3.24 / latest。
   # 当 v3 取代 v2 成为默认版本时，将此值改为空字符串即可。
   TAG_SUFFIX: "-s6v3"
+  PLATFORMS: '["linux/amd64","linux/arm64","linux/arm/v7","linux/386","linux/ppc64le"]'
 
 jobs:
   check_version:
     runs-on: ubuntu-latest
     outputs:
+      platforms: ${{ env.PLATFORMS }}
       should_build: ${{ steps.version-check.outputs.should_build }}
       full_version: ${{ steps.version-check.outputs.full_version }}
       minor_version: ${{ steps.version-check.outputs.minor_version }}
@@ -47,12 +49,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform:
-          - linux/amd64
-          - linux/arm64
-          - linux/arm/v7
-          - linux/386
-          - linux/ppc64le
+        platform: ${{ fromJSON(needs.check_version.outputs.platforms) }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -161,6 +158,15 @@ jobs:
           for digest in *; do
             refs+=("${DOCKER_IMAGE}@sha256:${digest}")
           done
+          # Only tag a manifest containing every configured platform exactly once.
+          docker buildx imagetools create --dry-run "${refs[@]}" | jq -e --argjson expected "$PLATFORMS" '
+            [.manifests[]
+              | select(.annotations["vnd.docker.reference.type"] != "attestation-manifest")
+              | .platform
+              | if .architecture == "arm64" and .variant == "v8" then del(.variant) else . end
+              | [.os, .architecture, .variant // empty] | join("/")
+            ] | sort == ($expected | sort)
+          '
           # 使用检查到的新版本号
           docker buildx imagetools create \
             -t "${{ env.DOCKER_IMAGE }}:${{ needs.check_version.outputs.full_version }}${{ env.TAG_SUFFIX }}" \

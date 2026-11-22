@@ -63,7 +63,7 @@ GitHub Actions 每周检查 Alpine 和 s6-overlay v3 的稳定版本。任一组
 
 ### 从 s6-overlay v2 迁移
 
-为了让 v2 风格的下游镜像直接换 base 即可运行，本镜像做了以下兼容处理（`S6_STAGE2_HOOK=/etc/s6-overlay/scripts/legacy-compat`）：
+为了让 v2 风格的下游镜像直接换 base 即可运行，本镜像做了以下兼容处理。`S6_STAGE2_HOOK` 可供下游自定义。兼容服务按 s6-rc 的依赖顺序启动。
 
 - `/etc/cont-init.d`、`/etc/cont-finish.d` 下的脚本以及 `/etc/services.d` 下的 `run`/`finish` 即使是 `0644` 也会在启动时补上可执行权限。
 - 保留 v2 的服务路径：`/var/run/s6/services/<服务名>` 指向 v3 的 `/run/service/<服务名>`，`s6-svc -r /var/run/s6/services/<服务名>` 这类命令继续可用。
