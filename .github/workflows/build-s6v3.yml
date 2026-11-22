@@ -2,6 +2,11 @@ name: 构建 Alpine s6 v3 镜像
 
 on:
   workflow_call:
+    inputs:
+      force_build:
+        description: Rebuild the current upstream versions for a source fix
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -37,6 +42,7 @@ jobs:
         id: version-check
         env:
           GH_TOKEN: ${{ github.token }}
+          FORCE_BUILD: ${{ inputs.force_build }}
         run: |
           bash .github/workflows/version-check.sh "${DOCKER_IMAGE}:latest${TAG_SUFFIX}" "${GHCR_IMAGE}:latest${TAG_SUFFIX}"
           echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
