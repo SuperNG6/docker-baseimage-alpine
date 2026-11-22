@@ -41,8 +41,7 @@ ENV PS1="$(whoami)@$(hostname):$(pwd)\\$ " \
 	HOME="/root" \
 	TERM="xterm" \
 	S6_CMD_WAIT_FOR_SERVICES_MAXTIME="0" \
-	S6_CMD_ARG0="/package/admin/s6-overlay/command/with-contenv" \
-	S6_STAGE2_HOOK="/etc/s6-overlay/scripts/legacy-compat" \
+	S6_CMD_ARG0="/command/with-contenv" \
 	S6_VERBOSITY=1
 
 RUN \
@@ -72,14 +71,20 @@ RUN \
  rm -rf \
 	/tmp/*
 
-# add local files
-COPY root/ /
+# Register the compatibility oneshot before overlay processes legacy scripts.
+# Leave the upstream stage-2 hook available to downstream images.
+RUN set -eu; \
+    sources=/package/admin/s6-overlay/etc/s6-rc/sources; \
+    test -f "$sources/fix-attrs/type"; \
+    mkdir -p "$sources/fix-attrs/dependencies.d" "$sources/base-legacy-compat"; \
+    touch "$sources/fix-attrs/dependencies.d/base-legacy-compat"; \
+    echo oneshot > "$sources/base-legacy-compat/type"; \
+    echo /usr/libexec/superng6/legacy-compat > "$sources/base-legacy-compat/up"; \
+    mkdir -p /usr/libexec/superng6/compat-bin /etc/s6-overlay/scripts; \
+    ln -s /usr/libexec/superng6/legacy-compat /etc/s6-overlay/scripts/legacy-compat; \
+    ln -s /usr/bin/with-contenv /usr/libexec/superng6/compat-bin/with-contenv; \
+    mv /init /usr/libexec/superng6/overlay-init
 
-# s6 puts /command first on service PATH. Keep the direct /bin entry point
-# and CMD on the upstream helper. Install an independent copy so downstreams
-# can still replace /usr/bin/with-contenv and delegate to /command/with-contenv.
-RUN test -x /package/admin/s6-overlay/command/with-contenv \
-    && ln -sf /package/admin/s6-overlay/command/with-contenv /bin/with-contenv \
-    && install -m 0755 /usr/bin/with-contenv /command/with-contenv
+COPY root/ /
 
 ENTRYPOINT ["/init"]

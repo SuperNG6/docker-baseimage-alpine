@@ -1,0 +1,17 @@
+#!/bin/sh
+# Match overlay's required search paths, then insert a directory containing
+# only with-contenv just before /command. Explicit command paths stay upstream.
+PATH=${PATH:-/bin}
+for dir in /bin /usr/bin /command; do
+    case ":$PATH:" in
+        *:"$dir":*) ;;
+        *) PATH="$dir:$PATH" ;;
+    esac
+done
+path=:${PATH}:
+before=${path%%:/command:*}
+after=${path#*:/command:}
+path="$before:/usr/libexec/superng6/compat-bin:/command:$after"
+PATH=${path#:}
+export PATH="${PATH%:}"
+exec /usr/libexec/superng6/overlay-init "$@"
