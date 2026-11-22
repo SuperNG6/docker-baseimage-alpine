@@ -68,6 +68,7 @@ GitHub Actions 每周检查 Alpine 和 s6-overlay v3 的稳定版本。任一组
 - `/etc/cont-init.d`、`/etc/cont-finish.d` 下的脚本以及 `/etc/services.d` 下的 `run`/`finish` 即使是 `0644` 也会在启动时补上可执行权限。
 - 保留 v2 的服务路径：`/var/run/s6/services/<服务名>` 指向 v3 的 `/run/service/<服务名>`，`s6-svc -r /var/run/s6/services/<服务名>` 这类命令继续可用。
 - s6 工具除了位于 `/command` 和 `/usr/bin`，也链接到 `/bin`，`#!/bin/execlineb`、`/bin/s6-svc` 这类 v2 绝对路径继续可用。
+- `FILE__NAME` 保留密钥文本的末尾换行，与 v2 一致。密码需要去掉末尾换行时，可以使用 `printf %s` 生成文件。
 - 默认 `CMD` 通过上游 `with-contenv` 获取容器环境变量。服务通过命令名或 `/usr/bin/with-contenv` 启动时会应用 `UMASK`。
 - `S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0`：初始化脚本没有超时限制，与 v2 行为一致。
 
