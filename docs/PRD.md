@@ -131,7 +131,7 @@
 
 ### 5.4 CI 相关
 
-- 默认分支的 `publish-s6v3.yml` 每周一 02:17 UTC 检查 Alpine 和 s6-overlay v3 的稳定版本，也支持手动触发。复用的 `build-s6v3.yml` 从 `v3` 检出源码。每周检查在上游有更新或镜像仓库缺少当前版本时构建并发布。手动触发可设置 `force_build=true` 发布当前版本的源码修复，仍经过候选镜像测试。
+- 默认分支的 `publish-s6v3.yml` 每周一 02:17 UTC 检查 Alpine 和 s6-overlay v3 的稳定版本，也支持手动触发。复用的 `build-s6v3.yml` 从 `v3` 检出源码。上游有更新或镜像仓库缺少当前版本时才构建并发布。
 - 版本检查从 Docker Hub 和 GHCR 已发布的镜像中读取 Alpine 与 s6-overlay 版本。发现更新时，构建使用检查阶段选定的版本。
 - 发布工作流按本次构建的 amd64 digest 运行基础契约和 docker-aria2 启动测试，并比对下游镜像的基础层。更新公开标签前，候选清单的平台集合必须与构建矩阵一致。
 - `version.txt` 当前没有被任何工作流引用。

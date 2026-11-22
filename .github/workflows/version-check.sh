@@ -72,7 +72,7 @@ for versions in "$hub_versions" "$ghcr_versions"; do
 done
 
 should_build=false
-if [[ ${FORCE_BUILD:-false} == true || $hub_versions != "$alpine $overlay" || $ghcr_versions != "$alpine $overlay" ]]; then
+if [[ $hub_versions != "$alpine $overlay" || $ghcr_versions != "$alpine $overlay" ]]; then
     should_build=true
 fi
 
