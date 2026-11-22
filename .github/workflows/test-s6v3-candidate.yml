@@ -29,16 +29,16 @@ jobs:
 
     steps:
       - name: 检出 base 镜像代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source_sha }}
 
       - name: 设置 Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: 下载本次构建的 amd64 digest
         if: inputs.candidate_repository != ''
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: digests-linux-amd64
           path: ${{ runner.temp }}/s6v3-digest
@@ -59,7 +59,7 @@ jobs:
 
       - name: 构建当前 s6 v3 base 镜像
         if: inputs.candidate_repository == ''
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
@@ -71,7 +71,7 @@ jobs:
         run: bash .github/scripts/test-base-contract.sh "${BASE_TEST_IMAGE}"
 
       - name: 检出 docker-aria2 s6 v2 风格下游
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: ${{ env.DOWNSTREAM_REPO }}
           ref: ${{ env.DOWNSTREAM_REF }}
